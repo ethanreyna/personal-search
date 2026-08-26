@@ -1,0 +1,9 @@
+{
+  "titles": ["Software Engineer", "Frontend Engineer", "Full Stack Engineer", "Front End Developer", "React Developer", "Product Engineer"],
+  "mustHaveAnySkills": ["React", "Next.js", "TypeScript", "JavaScript"],
+  "skills": ["React", "Next.js", "TypeScript", "JavaScript", "Node.js", "Express", "Python", "PostgreSQL", "GraphQL", "Docker"],
+  "locations": ["Houston, TX", "Houston", "Remote"],
+  "remoteOk": true,
+  "excludeKeywords": [],
+  "targetYearsExperience": 4
+}

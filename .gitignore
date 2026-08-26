@@ -1,0 +1,10 @@
+node_modules/
+client/dist/
+worker/dist/
+.wrangler/
+.dev.vars
+.dev.vars.*
+criteria.json
+*.local.json
+.DS_Store
+*.log

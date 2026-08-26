@@ -1,0 +1,22 @@
+{
+  "name": "personal-search",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build:client && wrangler dev",
+    "build:client": "npm --prefix client run build",
+    "deploy": "npm run build:client && wrangler deploy",
+    "secrets": "echo 'Run: wrangler secret put ADZUNA_APP_ID | ADZUNA_APP_KEY | RAPIDAPI_KEY | ACCESS_PASSWORD'",
+    "db:migrate:local": "wrangler d1 execute personal-search-db --local --file=./worker/migrations/0001_init.sql",
+    "db:migrate:remote": "wrangler d1 execute personal-search-db --remote --file=./worker/migrations/0001_init.sql"
+  },
+  "dependencies": {
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "wrangler": "^4.4.0",
+    "@cloudflare/workers-types": "^4.20240909.0"
+  }
+}
