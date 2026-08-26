@@ -8,3 +8,5 @@ criteria.json
 *.local.json
 .DS_Store
 *.log
+CLAUDE.local.md
+*.tsbuildinfo
