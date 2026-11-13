@@ -35,5 +35,6 @@ export interface SearchForm {
   maxApplicants: number | '';
   maxYears: number | '';
   excludeTitle: string;
+  excludeText: string;
   limit: number;
 }

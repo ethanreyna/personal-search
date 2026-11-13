@@ -80,15 +80,18 @@ export async function backfillMinYears(db: D1Database, batchSize = 200, maxBatch
   return total;
 }
 
-// Lowercased title with punctuation turned into spaces and padded, so
-// "% sr %" matches "Sr. Engineer" but not "Desktop Support".
-const NORMALIZED_TITLE = (() => {
-  let expr = "lower(' ' || title || ' ')";
-  for (const ch of [',', '.', '(', ')', '-', '/', '|', ':', '&', '[', ']']) {
+// Lowercased text with punctuation and line breaks turned into spaces and
+// padded, so "% sr %" matches "Sr. Engineer" but not "Desktop Support".
+function normalized(column: string): string {
+  let expr = `lower(' ' || coalesce(${column}, '') || ' ')`;
+  for (const ch of [',', '.', '(', ')', '-', '/', '|', ':', ';', '!', '?', '"', '&', '[', ']', '*']) {
     expr = `replace(${expr}, '${ch}', ' ')`;
   }
+  for (const code of [9, 10, 13]) expr = `replace(${expr}, char(${code}), ' ')`;
   return expr;
-})();
+}
+const NORMALIZED_TITLE = normalized('title');
+const NORMALIZED_DESCRIPTION = normalized('description');
 
 export interface ListingFilters {
   status?: string;
@@ -104,6 +107,8 @@ export interface ListingFilters {
   maxYears?: number;
   /** Hide listings whose title contains any of these whole words/phrases (already normalized). */
   excludeTitleWords?: string[];
+  /** Hide listings whose description contains any of these whole words/phrases. */
+  excludeDescriptionWords?: string[];
 }
 
 export async function getListings(db: D1Database, opts: ListingFilters) {
@@ -143,6 +148,10 @@ export async function getListings(db: D1Database, opts: ListingFilters) {
   }
   for (const word of opts.excludeTitleWords ?? []) {
     query += ` AND ${NORMALIZED_TITLE} NOT LIKE ?`;
+    binds.push(`% ${word} %`);
+  }
+  for (const word of opts.excludeDescriptionWords ?? []) {
+    query += ` AND ${NORMALIZED_DESCRIPTION} NOT LIKE ?`;
     binds.push(`% ${word} %`);
   }
   query += ' ORDER BY score DESC, fetched_at DESC LIMIT ?';

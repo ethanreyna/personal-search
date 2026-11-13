@@ -21,6 +21,7 @@ const DEFAULT_FORM: SearchForm = {
   maxApplicants: 100,
   maxYears: 3,
   excludeTitle: 'senior, sr, lead, principal, staff, manager, director, architect, iii',
+  excludeText: '',
   limit: 50,
 };
 
@@ -55,12 +56,16 @@ export default function App() {
     }
   }, [form]);
 
-  // Apply the title word list after typing pauses, not on every keystroke.
+  // Apply the word lists after typing pauses, not on every keystroke.
   const [excludeTitleApplied, setExcludeTitleApplied] = useState(form.excludeTitle);
+  const [excludeTextApplied, setExcludeTextApplied] = useState(form.excludeText);
   useEffect(() => {
-    const t = setTimeout(() => setExcludeTitleApplied(form.excludeTitle), 400);
+    const t = setTimeout(() => {
+      setExcludeTitleApplied(form.excludeTitle);
+      setExcludeTextApplied(form.excludeText);
+    }, 400);
     return () => clearTimeout(t);
-  }, [form.excludeTitle]);
+  }, [form.excludeTitle, form.excludeText]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -75,6 +80,7 @@ export default function App() {
       if (form.postedWithinDays) params.set('postedWithinDays', String(form.postedWithinDays));
       if (form.maxYears !== '') params.set('maxYears', String(form.maxYears));
       if (excludeTitleApplied.trim()) params.set('excludeTitle', excludeTitleApplied);
+      if (excludeTextApplied.trim()) params.set('excludeText', excludeTextApplied);
       params.set('limit', '200');
       const res = await fetch(`/api/listings?${params.toString()}`);
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
@@ -93,6 +99,7 @@ export default function App() {
     form.postedWithinDays,
     form.maxYears,
     excludeTitleApplied,
+    excludeTextApplied,
   ]);
 
   useEffect(() => {
@@ -237,6 +244,17 @@ export default function App() {
               placeholder="comma-separated words, e.g. senior, lead"
               value={form.excludeTitle}
               onChange={(e) => update('excludeTitle', e.target.value)}
+            />
+          </label>
+        </div>
+        <div className="row">
+          <label className="grow">
+            Hide descriptions with
+            <input
+              className="grow"
+              placeholder="comma-separated words or phrases, e.g. clearance, phd, on-call"
+              value={form.excludeText}
+              onChange={(e) => update('excludeText', e.target.value)}
             />
           </label>
         </div>

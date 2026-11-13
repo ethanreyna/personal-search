@@ -50,6 +50,7 @@ app.get('/api/listings', async (c) => {
     hasPoster: q('hasPoster') === '1',
     maxYears: num(q('maxYears')),
     excludeTitleWords: parseWordList(q('excludeTitle')),
+    excludeDescriptionWords: parseWordList(q('excludeText')),
   });
   return c.json(rows);
 });
