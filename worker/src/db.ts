@@ -1,5 +1,5 @@
 import type { Criteria, RawListing } from './sources/types';
-import { minYearsRequired } from './experience';
+import { minYearsRequired, normalizeText } from './experience';
 import { matchListing, matchVersion } from './match';
 
 function makeId(source: string, externalId: string): string {
@@ -19,8 +19,8 @@ export async function upsertListing(db: D1Database, listing: RawListing, criteri
       `INSERT INTO listings
         (id, source, external_id, title, company, location, remote, url, description, salary_min, salary_max, posted_at, fetched_at, score, status,
          applicants, poster_name, poster_title, poster_url, company_website, min_years, years_checked,
-         match_notes, score_version)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'new', ?15, ?16, ?17, ?18, ?19, ?20, 1, ?21, ?22)
+         match_notes, score_version, desc_norm, norm_checked)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'new', ?15, ?16, ?17, ?18, ?19, ?20, 1, ?21, ?22, ?23, 1)
        ON CONFLICT(source, external_id) DO UPDATE SET
          title = excluded.title,
          company = excluded.company,
@@ -41,7 +41,9 @@ export async function upsertListing(db: D1Database, listing: RawListing, criteri
          min_years = excluded.min_years,
          years_checked = 1,
          match_notes = excluded.match_notes,
-         score_version = excluded.score_version`
+         score_version = excluded.score_version,
+         desc_norm = excluded.desc_norm,
+         norm_checked = 1`
     )
     .bind(
       id,
@@ -65,14 +67,15 @@ export async function upsertListing(db: D1Database, listing: RawListing, criteri
       listing.companyWebsite ?? null,
       minYears,
       match.notes,
-      matchVersion(criteria)
+      matchVersion(criteria),
+      normalizeText(listing.description)
     )
     .run();
   return id;
 }
 
 /** Recomputes match % for rows scored with older criteria or an older formula. */
-export async function rescoreListings(db: D1Database, criteria: Criteria, batchSize = 200, maxBatches = 15): Promise<number> {
+export async function rescoreListings(db: D1Database, criteria: Criteria, batchSize = 100, maxBatches = 2): Promise<number> {
   const version = matchVersion(criteria);
   const stmt = db.prepare('UPDATE listings SET score = ?, match_notes = ?, score_version = ? WHERE id = ?');
   let total = 0;
@@ -80,7 +83,7 @@ export async function rescoreListings(db: D1Database, criteria: Criteria, batchS
     const { results } = await db
       .prepare(
         `SELECT id, source, external_id, title, location, remote, url, description, min_years
-         FROM listings WHERE score_version IS NULL OR score_version != ? LIMIT ?`
+         FROM listings WHERE years_checked = 1 AND (score_version IS NULL OR score_version != ?) LIMIT ?`
       )
       .bind(version, batchSize)
       .all<{ id: string; source: string; external_id: string; title: string; location: string | null;
@@ -103,19 +106,49 @@ export async function rescoreListings(db: D1Database, criteria: Criteria, batchS
   return total;
 }
 
-/** Parses experience requirements for rows stored before that column existed. */
-export async function backfillMinYears(db: D1Database, batchSize = 200, maxBatches = 10): Promise<number> {
-  const stmt = db.prepare('UPDATE listings SET min_years = ?, years_checked = 1 WHERE id = ?');
+/**
+ * Fills derived columns (experience asked, normalized description) for rows
+ * stored before those columns existed. Capped per call to keep CPU low;
+ * remaining rows are picked up on later calls.
+ */
+export async function backfillDerived(db: D1Database, batchSize = 200, maxBatches = 2): Promise<number> {
+  const stmt = db.prepare('UPDATE listings SET min_years = ?, years_checked = 1, desc_norm = ?, norm_checked = 1 WHERE id = ?');
   let total = 0;
   for (let i = 0; i < maxBatches; i++) {
     const { results } = await db
-      .prepare('SELECT id, description FROM listings WHERE years_checked = 0 LIMIT ?')
+      .prepare('SELECT id, description FROM listings WHERE years_checked = 0 OR norm_checked = 0 LIMIT ?')
       .bind(batchSize)
       .all<{ id: string; description: string | null }>();
     if (!results.length) break;
-    await db.batch(results.map((r) => stmt.bind(minYearsRequired(r.description), r.id)));
+    await db.batch(
+      results.map((r) => stmt.bind(minYearsRequired(r.description), normalizeText(r.description), r.id))
+    );
     total += results.length;
     if (results.length < batchSize) break;
+  }
+  return total;
+}
+
+/**
+ * Deletes listings nobody acted on (still "new", no contact or draft) that
+ * haven't been seen by a search or sync in `days` days.
+ */
+export async function pruneStale(db: D1Database, days = 30, batchSize = 1000, maxBatches = 20): Promise<number> {
+  const cutoff = new Date(Date.now() - days * 86400_000).toISOString();
+  let total = 0;
+  for (let i = 0; i < maxBatches; i++) {
+    const res = await db
+      .prepare(
+        `DELETE FROM listings WHERE id IN (
+           SELECT id FROM listings
+           WHERE status = 'new' AND contact_email IS NULL AND draft_body IS NULL AND fetched_at < ?
+           LIMIT ?)`
+      )
+      .bind(cutoff, batchSize)
+      .run();
+    const n = res.meta.changes ?? 0;
+    total += n;
+    if (n < batchSize) break;
   }
   return total;
 }
@@ -131,7 +164,6 @@ function normalized(column: string): string {
   return expr;
 }
 const NORMALIZED_TITLE = normalized('title');
-const NORMALIZED_DESCRIPTION = normalized('description');
 
 export interface ListingFilters {
   status?: string;
@@ -203,7 +235,7 @@ export async function getListings(db: D1Database, opts: ListingFilters) {
     binds.push(`% ${word} %`);
   }
   for (const word of opts.excludeDescriptionWords ?? []) {
-    query += ` AND ${NORMALIZED_DESCRIPTION} NOT LIKE ?`;
+    query += " AND coalesce(desc_norm, '') NOT LIKE ?";
     binds.push(`% ${word} %`);
   }
   query += ` ORDER BY ${SORTS[opts.sort ?? ''] ?? SORTS.score} LIMIT ?`;

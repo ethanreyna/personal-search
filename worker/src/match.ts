@@ -57,6 +57,35 @@ function has(text: string, term: string): boolean {
   return re.test(text);
 }
 
+interface Vocab {
+  re: RegExp;
+  /** Matched spelling -> canonical lowercased term. */
+  canon: Map<string, string>;
+  /** Canonical term -> display label. */
+  label: Map<string, string>;
+}
+
+// One alternation over every spelling, so each listing's text is scanned once.
+const vocabCache = new WeakMap<Criteria, Vocab>();
+function vocabFor(criteria: Criteria): Vocab {
+  const cached = vocabCache.get(criteria);
+  if (cached) return cached;
+  const canon = new Map<string, string>();
+  const label = new Map<string, string>();
+  for (const t of [...KNOWN_TECH, ...criteria.skills, ...criteria.mustHaveAnySkills]) {
+    const key = t.toLowerCase();
+    if (!label.has(key)) label.set(key, t);
+    for (const form of [key, ...(ALIASES[key] ?? [])]) {
+      if (!canon.has(form)) canon.set(form, key);
+    }
+  }
+  const forms = [...canon.keys()].sort((a, b) => b.length - a.length).map(escape).join('|');
+  const re = new RegExp(`(?<![a-z0-9+#])(?:${forms})(?![a-z0-9+#]|\\.[a-z])`, 'g');
+  const v = { re, canon, label };
+  vocabCache.set(criteria, v);
+  return v;
+}
+
 function plain(s: string | undefined): string {
   return (s ?? '')
     .replace(/<[^>]+>/g, ' ')
@@ -87,15 +116,14 @@ export function matchListing(listing: RawListing, criteria: Criteria, minYears?:
   titlePts = Math.max(0, titlePts);
 
   // Skill coverage (40): share of the named tech you have, plus your core stack showing up.
+  const vocab = vocabFor(criteria);
   const named = new Set<string>();
-  for (const t of [...KNOWN_TECH, ...criteria.skills]) {
-    if (has(text, t)) named.add(t.toLowerCase());
-  }
+  for (const m of text.matchAll(vocab.re)) named.add(vocab.canon.get(m[0]) ?? m[0]);
   const matched = [...named].filter((t) => mine.has(t));
   const missing = [...named].filter((t) => !mine.has(t));
   // Pulled toward 50% when a listing names only a couple of technologies.
   const coverage = (matched.length + 1) / (named.size + 2);
-  const coreHit = core.some((s) => has(text, s));
+  const coreHit = core.some((s) => named.has(s.toLowerCase()));
   const skillPts = 28 * coverage + (coreHit ? 12 : 0);
 
   // Experience (20)
@@ -114,8 +142,7 @@ export function matchListing(listing: RawListing, criteria: Criteria, minYears?:
     if (ex && text.includes(ex.toLowerCase())) score -= 50;
   }
 
-  const label = (t: string) =>
-    [...KNOWN_TECH, ...criteria.skills].find((k) => k.toLowerCase() === t) ?? t;
+  const label = (t: string) => vocab.label.get(t) ?? t;
   const parts: string[] = [];
   if (matched.length) parts.push(`Has ${matched.slice(0, 8).map(label).join(', ')}`);
   if (missing.length) parts.push(`Missing ${missing.slice(0, 6).map(label).join(', ')}`);

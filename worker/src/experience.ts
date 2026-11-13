@@ -61,3 +61,18 @@ export function parseWordList(raw: string | undefined): string[] {
     .filter(Boolean)
     .slice(0, 30);
 }
+
+/**
+ * Lowercased words separated by single spaces and padded with a space on each
+ * side, HTML removed, so "% on call %" matches "On-call" but "% sr %" doesn't
+ * match "Support". Uses the same character rules as parseWordList.
+ */
+export function normalizeText(s: string | null | undefined): string {
+  const words = (s ?? '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&[a-z#0-9]+;/gi, ' ')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  return ` ${words} `;
+}

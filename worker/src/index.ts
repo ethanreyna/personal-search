@@ -5,8 +5,9 @@ import { findPosterEmail } from './contact';
 import { draftOutreach } from './draft';
 import { parseWordList } from './experience';
 import {
-  backfillMinYears,
+  backfillDerived,
   rescoreListings,
+  pruneStale,
   upsertListing,
   getListings,
   getListing,
@@ -38,7 +39,7 @@ app.get('/api/listings', async (c) => {
   const q = (k: string) => c.req.query(k) || undefined;
   // Catch up rows stored before experience parsing existed, and re-score
   // anything computed with older criteria. Both are no-ops once done.
-  await backfillMinYears(c.env.DB);
+  await backfillDerived(c.env.DB);
   await rescoreListings(c.env.DB, getCriteria(c.env));
   const rows = await getListings(c.env.DB, {
     status: q('status'),
@@ -70,7 +71,7 @@ app.post('/api/search', async (c) => {
   for (const l of result.listings) {
     await upsertListing(c.env.DB, l, criteria);
   }
-  await backfillMinYears(c.env.DB);
+  await backfillDerived(c.env.DB);
   await recordSyncRun(c.env.DB, startedAt, new Date().toISOString(), result.ok, result.failed, result.listings.length);
 
   const summary = {
@@ -153,7 +154,10 @@ async function runSync(env: Env) {
   for (const listing of listings) {
     await upsertListing(env.DB, listing, criteria);
   }
-  await backfillMinYears(env.DB);
+  await backfillDerived(env.DB);
+  await rescoreListings(env.DB, criteria);
+  const pruned = await pruneStale(env.DB, 30);
+  if (pruned) console.log(`pruned ${pruned} stale listings`);
 
   const finishedAt = new Date().toISOString();
   await recordSyncRun(env.DB, startedAt, finishedAt, ok, failed, listings.length);
