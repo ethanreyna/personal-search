@@ -36,7 +36,11 @@ client/              React/Vite dashboard
    ```
 2. Copy `worker/criteria.example.json` to `worker/criteria.json` and fill
    in your own titles/skills/locations. This file is gitignored and never
-   committed.
+   committed. The Worker reads it at runtime from the `CRITERIA_JSON`
+   secret (upload it with `pnpm run criteria:upload`, and re-run that
+   whenever you edit the file). For local dev, add it to `.dev.vars` as a
+   single line: `CRITERIA_JSON='{"titles":[...],...}'`. Without it, the
+   example criteria are used.
 3. Log in and create the D1 database:
    ```
    pnpm exec wrangler login
@@ -51,15 +55,51 @@ client/              React/Vite dashboard
    without a key are simply skipped):
    ```
    pnpm exec wrangler secret put ACCESS_PASSWORD
+   pnpm exec wrangler secret put APIFY_TOKEN        # on-demand keyword search
+   pnpm exec wrangler secret put HUNTER_API_KEY     # contact lookup
+   pnpm exec wrangler secret put ANTHROPIC_API_KEY  # message drafts
    pnpm exec wrangler secret put ADZUNA_APP_ID
    pnpm exec wrangler secret put ADZUNA_APP_KEY
    pnpm exec wrangler secret put RAPIDAPI_KEY
    ```
+   For local dev, put the same keys in `.dev.vars` (gitignored).
 6. Run locally or deploy:
    ```
    pnpm run dev
    pnpm run deploy
    ```
+   `deploy` builds the dashboard, applies any pending D1 migrations, then
+   deploys the Worker.
+
+## Automatic deploys
+
+The Worker is connected to this repo with Cloudflare Workers Builds, so
+every push to `main` deploys (Worker → Settings → Build):
+
+- Build command: *(empty)*
+- Deploy command: `pnpm run deploy`
+- The build's API token needs **D1: Edit** in addition to the defaults,
+  since the deploy applies migrations.
+
+Runtime secrets (`CRITERIA_JSON`, API keys) live on the Worker and are not
+part of the build.
+
+## On-demand search and outreach
+
+The dashboard's search panel runs a keyword search through a hosted Apify
+actor (set `APIFY_ACTOR` to override the default). "Posted within" and
+"remote only" narrow the search itself; the applicant cap filters what's
+shown, so it can be changed without re-fetching.
+
+Listings that include the poster's profile get a "Find email" button
+(Hunter email-finder; a credit is only spent when an address is found,
+and the confidence score is shown next to it). "Draft email" writes a
+short message from the `outreach` section of `worker/criteria.json`; the
+draft is editable and saved per listing. Nothing is ever sent
+automatically.
+
+Schema changes live in `worker/migrations/` and are applied with
+`pnpm run db:migrate:local` / `pnpm run db:migrate:remote`.
 
 The scheduled sync runs on the cron in `wrangler.toml` (every 4 hours by
 default). You can also trigger a sync manually from the dashboard, or by

@@ -107,6 +107,61 @@ button.active { background: var(--accent); border-color: var(--accent); color: w
   padding: 0 6px;
 }
 
-.actions { display: flex; gap: 6px; margin-top: 10px; }
+.actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+.spacer { flex: 1; }
 
 .error { color: #ff6b6b; }
+.note { color: var(--muted); font-size: 0.8rem; margin: 8px 0 0; }
+.muted { color: var(--muted); }
+
+input, select, textarea {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 0.85rem;
+}
+input[type='checkbox'] { padding: 0; }
+
+.search {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.search .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.search label, .toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.grow { flex: 1; min-width: 180px; }
+.narrow { width: 70px; }
+
+.tag.good { background: rgba(80, 200, 120, 0.15); color: #50c878; }
+.tag.warn { background: rgba(255, 170, 60, 0.15); color: #ffaa3c; }
+
+.poster { font-size: 0.8rem; margin-top: 6px; }
+.poster a { color: var(--accent); }
+
+.draft { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.draft textarea { width: 100%; resize: vertical; line-height: 1.45; }
+
+a.button {
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+a.button:hover { border-color: var(--accent); }

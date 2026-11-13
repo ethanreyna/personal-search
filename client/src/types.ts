@@ -14,4 +14,26 @@ export interface Listing {
   fetched_at: string;
   score: number;
   status: 'new' | 'saved' | 'dismissed' | 'applied';
+  applicants: number | null;
+  poster_name: string | null;
+  poster_title: string | null;
+  poster_url: string | null;
+  company_website: string | null;
+  contact_email: string | null;
+  contact_status: 'found' | 'not_found' | 'no_poster' | null;
+  contact_score: number | null;
+  min_years: number | null;
+  draft_subject: string | null;
+  draft_body: string | null;
+}
+
+export interface SearchForm {
+  keywords: string;
+  location: string;
+  remoteOnly: boolean;
+  postedWithinDays: number;
+  maxApplicants: number | '';
+  maxYears: number | '';
+  excludeTitle: string;
+  limit: number;
 }

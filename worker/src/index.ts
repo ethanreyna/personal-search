@@ -1,10 +1,22 @@
 import { Hono } from 'hono';
-import type { Env } from './sources/types';
+import type { Env, SearchParams } from './sources/types';
 import { fetchAllSources } from './sources';
+import { searchLinkedIn } from './sources/linkedin';
 import { scoreListing } from './match';
-import { upsertListing, getListings, setListingStatus, recordSyncRun } from './db';
-// Private, gitignored — holds your actual target titles/skills/locations. See worker/criteria.example.json for the template.
-import criteria from '../criteria.json';
+import { findPosterEmail } from './contact';
+import { draftOutreach } from './draft';
+import { parseWordList } from './experience';
+import {
+  backfillMinYears,
+  upsertListing,
+  getListings,
+  getListing,
+  setListingStatus,
+  setContact,
+  setDraft,
+  recordSyncRun,
+} from './db';
+import { getCriteria } from './criteria';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -21,16 +33,88 @@ app.use('*', async (c, next) => {
   await next();
 });
 
+const num = (v: string | undefined) => (v && !isNaN(Number(v)) ? Number(v) : undefined);
+
 app.get('/api/listings', async (c) => {
-  const status = c.req.query('status') || undefined;
-  const minScoreRaw = c.req.query('minScore');
-  const limitRaw = c.req.query('limit');
+  const q = (k: string) => c.req.query(k) || undefined;
+  // Picks up rows stored before experience parsing existed; no-op once done.
+  await backfillMinYears(c.env.DB);
   const rows = await getListings(c.env.DB, {
-    status,
-    minScore: minScoreRaw ? Number(minScoreRaw) : undefined,
-    limit: limitRaw ? Number(limitRaw) : undefined,
+    status: q('status'),
+    minScore: num(q('minScore')),
+    limit: num(q('limit')),
+    source: q('source'),
+    maxApplicants: num(q('maxApplicants')),
+    strictApplicants: q('strictApplicants') === '1',
+    postedWithinDays: num(q('postedWithinDays')),
+    hasPoster: q('hasPoster') === '1',
+    maxYears: num(q('maxYears')),
+    excludeTitleWords: parseWordList(q('excludeTitle')),
   });
   return c.json(rows);
+});
+
+// On-demand keyword search. Posting age and remote are applied by the
+// search itself; the applicant cap is applied when listing results.
+app.post('/api/search', async (c) => {
+  const body = await c.req.json<SearchParams>();
+  if (!body.keywords?.trim()) return c.json({ error: 'keywords required' }, 400);
+
+  const startedAt = new Date().toISOString();
+  try {
+    const found = await searchLinkedIn(c.env, { ...body, keywords: body.keywords.trim() });
+    for (const l of found) {
+      await upsertListing(c.env.DB, l, scoreListing(l, getCriteria(c.env)));
+    }
+    await backfillMinYears(c.env.DB);
+    await recordSyncRun(c.env.DB, startedAt, new Date().toISOString(), ['linkedin'], [], found.length);
+    return c.json({ processed: found.length });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await recordSyncRun(c.env.DB, startedAt, new Date().toISOString(), [], ['linkedin'], 0);
+    return c.json({ error: message }, 502);
+  }
+});
+
+app.post('/api/listings/:id/contact', async (c) => {
+  const id = c.req.param('id');
+  const row = await getListing(c.env.DB, id);
+  if (!row) return c.json({ error: 'not found' }, 404);
+
+  const result = await findPosterEmail(c.env, row as any);
+  // Don't persist transient errors (bad key, rate limit) so a retry is possible.
+  if (result.status !== 'error') {
+    await setContact(c.env.DB, id, result.email, result.status, result.score ?? null);
+  }
+  return c.json(result, result.status === 'error' ? 502 : 200);
+});
+
+app.post('/api/listings/:id/draft', async (c) => {
+  const id = c.req.param('id');
+  const row = await getListing(c.env.DB, id);
+  if (!row) return c.json({ error: 'not found' }, 404);
+
+  const profile = c.env.CRITERIA_JSON ? getCriteria(c.env).outreach : undefined;  if (!profile?.name || !profile.background?.length) {
+    return c.json(
+      { error: 'Set the CRITERIA_JSON secret (with an "outreach" section) before drafting' },
+      400
+    );
+  }
+  try {
+    const draft = await draftOutreach(c.env, profile, row as any);
+    await setDraft(c.env.DB, id, draft.subject, draft.body);
+    return c.json(draft);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 502);
+  }
+});
+
+// Save manual edits to a draft.
+app.put('/api/listings/:id/draft', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json<{ subject: string; body: string }>();
+  await setDraft(c.env.DB, id, body.subject ?? '', body.body ?? '');
+  return c.json({ ok: true });
 });
 
 app.post('/api/listings/:id/status', async (c) => {
@@ -53,16 +137,18 @@ app.post('/api/sync', async (c) => {
 });
 
 // Anything else falls through to the built frontend.
-app.get('*', (c) => c.env.ASSETS.fetch(c.req.raw));
+app.get('*', async (c) => await c.env.ASSETS.fetch(c.req.raw));
 
 async function runSync(env: Env) {
   const startedAt = new Date().toISOString();
-  const { listings, ok, failed } = await fetchAllSources(env, criteria as any);
+  const criteria = getCriteria(env);
+  const { listings, ok, failed } = await fetchAllSources(env, criteria);
 
   for (const listing of listings) {
-    const score = scoreListing(listing, criteria as any);
+    const score = scoreListing(listing, criteria);
     await upsertListing(env.DB, listing, score);
   }
+  await backfillMinYears(env.DB);
 
   const finishedAt = new Date().toISOString();
   await recordSyncRun(env.DB, startedAt, finishedAt, ok, failed, listings.length);

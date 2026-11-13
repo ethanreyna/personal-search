@@ -3,6 +3,10 @@ main = "worker/src/index.ts"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
 
+routes = [
+  { pattern = "personal-search.elthan.net", custom_domain = true }
+]
+
 [assets]
 directory = "./client/dist"
 binding = "ASSETS"
@@ -15,4 +19,5 @@ crons = ["0 */4 * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "personal-search-db"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "cbd2801c-3796-4637-a6d3-18cd7ce185fb"
+migrations_dir = "worker/migrations"

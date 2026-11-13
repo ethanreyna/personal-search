@@ -1,18 +1,22 @@
 import type { RawListing } from './sources/types';
+import { minYearsRequired } from './experience';
 
 function makeId(source: string, externalId: string): string {
   return `${source}:${externalId}`;
 }
 
-export async function upsertListing(db: D1Database, listing: RawListing, score: number): Promise<void> {
+export async function upsertListing(db: D1Database, listing: RawListing, score: number): Promise<string> {
   const id = makeId(listing.source, listing.externalId);
   const now = new Date().toISOString();
 
+  // Contact lookups, drafts and status are intentionally left out of the
+  // conflict update so re-fetching a listing never wipes them.
   await db
     .prepare(
       `INSERT INTO listings
-        (id, source, external_id, title, company, location, remote, url, description, salary_min, salary_max, posted_at, fetched_at, score, status)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'new')
+        (id, source, external_id, title, company, location, remote, url, description, salary_min, salary_max, posted_at, fetched_at, score, status,
+         applicants, poster_name, poster_title, poster_url, company_website, min_years, years_checked)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'new', ?15, ?16, ?17, ?18, ?19, ?20, 1)
        ON CONFLICT(source, external_id) DO UPDATE SET
          title = excluded.title,
          company = excluded.company,
@@ -24,7 +28,14 @@ export async function upsertListing(db: D1Database, listing: RawListing, score: 
          salary_max = excluded.salary_max,
          posted_at = excluded.posted_at,
          fetched_at = excluded.fetched_at,
-         score = excluded.score`
+         score = excluded.score,
+         applicants = excluded.applicants,
+         poster_name = COALESCE(excluded.poster_name, listings.poster_name),
+         poster_title = COALESCE(excluded.poster_title, listings.poster_title),
+         poster_url = COALESCE(excluded.poster_url, listings.poster_url),
+         company_website = COALESCE(excluded.company_website, listings.company_website),
+         min_years = excluded.min_years,
+         years_checked = 1`
     )
     .bind(
       id,
@@ -40,15 +51,62 @@ export async function upsertListing(db: D1Database, listing: RawListing, score: 
       listing.salaryMax ?? null,
       listing.postedAt ?? null,
       now,
-      score
+      score,
+      listing.applicants ?? null,
+      listing.posterName ?? null,
+      listing.posterTitle ?? null,
+      listing.posterUrl ?? null,
+      listing.companyWebsite ?? null,
+      minYearsRequired(listing.description)
     )
     .run();
+  return id;
 }
 
-export async function getListings(
-  db: D1Database,
-  opts: { status?: string; minScore?: number; limit?: number }
-) {
+/** Parses experience requirements for rows stored before that column existed. */
+export async function backfillMinYears(db: D1Database, batchSize = 200, maxBatches = 10): Promise<number> {
+  const stmt = db.prepare('UPDATE listings SET min_years = ?, years_checked = 1 WHERE id = ?');
+  let total = 0;
+  for (let i = 0; i < maxBatches; i++) {
+    const { results } = await db
+      .prepare('SELECT id, description FROM listings WHERE years_checked = 0 LIMIT ?')
+      .bind(batchSize)
+      .all<{ id: string; description: string | null }>();
+    if (!results.length) break;
+    await db.batch(results.map((r) => stmt.bind(minYearsRequired(r.description), r.id)));
+    total += results.length;
+    if (results.length < batchSize) break;
+  }
+  return total;
+}
+
+// Lowercased title with punctuation turned into spaces and padded, so
+// "% sr %" matches "Sr. Engineer" but not "Desktop Support".
+const NORMALIZED_TITLE = (() => {
+  let expr = "lower(' ' || title || ' ')";
+  for (const ch of [',', '.', '(', ')', '-', '/', '|', ':', '&', '[', ']']) {
+    expr = `replace(${expr}, '${ch}', ' ')`;
+  }
+  return expr;
+})();
+
+export interface ListingFilters {
+  status?: string;
+  minScore?: number;
+  limit?: number;
+  source?: string;
+  /** Listings with an unknown applicant count are kept unless `strictApplicants` is set. */
+  maxApplicants?: number;
+  strictApplicants?: boolean;
+  postedWithinDays?: number;
+  hasPoster?: boolean;
+  /** Hide listings whose description asks for more than this many years. Unstated is kept. */
+  maxYears?: number;
+  /** Hide listings whose title contains any of these whole words/phrases (already normalized). */
+  excludeTitleWords?: string[];
+}
+
+export async function getListings(db: D1Database, opts: ListingFilters) {
   const limit = opts.limit ?? 100;
   let query = 'SELECT * FROM listings WHERE 1=1';
   const binds: unknown[] = [];
@@ -61,6 +119,32 @@ export async function getListings(
     query += ' AND score >= ?';
     binds.push(opts.minScore);
   }
+  if (opts.source) {
+    query += ' AND source = ?';
+    binds.push(opts.source);
+  }
+  if (opts.maxApplicants !== undefined) {
+    query += opts.strictApplicants
+      ? ' AND applicants IS NOT NULL AND applicants < ?'
+      : ' AND (applicants IS NULL OR applicants < ?)';
+    binds.push(opts.maxApplicants);
+  }
+  if (opts.postedWithinDays !== undefined) {
+    const cutoff = new Date(Date.now() - opts.postedWithinDays * 86400_000).toISOString();
+    query += ' AND posted_at >= ?';
+    binds.push(cutoff);
+  }
+  if (opts.hasPoster) {
+    query += ' AND poster_url IS NOT NULL';
+  }
+  if (opts.maxYears !== undefined) {
+    query += ' AND (min_years IS NULL OR min_years <= ?)';
+    binds.push(opts.maxYears);
+  }
+  for (const word of opts.excludeTitleWords ?? []) {
+    query += ` AND ${NORMALIZED_TITLE} NOT LIKE ?`;
+    binds.push(`% ${word} %`);
+  }
   query += ' ORDER BY score DESC, fetched_at DESC LIMIT ?';
   binds.push(limit);
 
@@ -68,8 +152,32 @@ export async function getListings(
   return results;
 }
 
+export async function getListing(db: D1Database, id: string) {
+  return db.prepare('SELECT * FROM listings WHERE id = ?').bind(id).first<Record<string, any>>();
+}
+
 export async function setListingStatus(db: D1Database, id: string, status: string): Promise<void> {
   await db.prepare('UPDATE listings SET status = ? WHERE id = ?').bind(status, id).run();
+}
+
+export async function setContact(
+  db: D1Database,
+  id: string,
+  email: string | null,
+  status: string,
+  score: number | null
+): Promise<void> {
+  await db
+    .prepare('UPDATE listings SET contact_email = ?, contact_status = ?, contact_score = ? WHERE id = ?')
+    .bind(email, status, score, id)
+    .run();
+}
+
+export async function setDraft(db: D1Database, id: string, subject: string, body: string): Promise<void> {
+  await db
+    .prepare('UPDATE listings SET draft_subject = ?, draft_body = ? WHERE id = ?')
+    .bind(subject, body, id)
+    .run();
 }
 
 export async function recordSyncRun(

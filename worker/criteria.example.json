@@ -5,5 +5,14 @@
   "locations": ["Houston, TX", "Houston", "Remote"],
   "remoteOk": true,
   "excludeKeywords": [],
-  "targetYearsExperience": 4
+  "targetYearsExperience": 4,
+  "outreach": {
+    "name": "Your Name",
+    "background": [
+      "One concrete fact about recent work: what you built and with what",
+      "Another specific, checkable detail",
+      "Degree and years of experience"
+    ],
+    "links": ["https://github.com/yourname"]
+  }
 }

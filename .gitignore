@@ -4,6 +4,7 @@ worker/dist/
 .wrangler/
 .dev.vars
 .dev.vars.*
+.cf-token
 criteria.json
 *.local.json
 .DS_Store
