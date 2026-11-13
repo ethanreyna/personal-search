@@ -54,6 +54,7 @@ app.get('/api/listings', async (c) => {
     excludeTitleWords: parseWordList(q('excludeTitle')),
     excludeDescriptionWords: parseWordList(q('excludeText')),
     sort: q('sort'),
+    englishOnly: q('englishOnly') === '1',
   });
   return c.json(rows);
 });

@@ -67,6 +67,7 @@ export default function App() {
   const [minScore, setMinScore] = useState(0);
   const [source, setSource] = useState(() => readPref('source', ''));
   const [sort, setSort] = useState(() => readPref('sort', 'score'));
+  const [englishOnly, setEnglishOnly] = useState(() => readPref('englishOnly', '1') === '1');
   const [onlyWithPoster, setOnlyWithPoster] = useState(false);
   const [form, setForm] = useState<SearchForm>(loadForm);
   const [loading, setLoading] = useState(false);
@@ -103,6 +104,7 @@ export default function App() {
       if (minScore) params.set('minScore', String(minScore));
       if (source) params.set('source', source);
       params.set('sort', sort);
+      if (englishOnly) params.set('englishOnly', '1');
       if (onlyWithPoster) params.set('hasPoster', '1');
       if (form.maxApplicants !== '') params.set('maxApplicants', String(form.maxApplicants));
       if (form.postedWithinDays) params.set('postedWithinDays', String(form.postedWithinDays));
@@ -123,6 +125,7 @@ export default function App() {
     minScore,
     source,
     sort,
+    englishOnly,
     onlyWithPoster,
     form.maxApplicants,
     form.postedWithinDays,
@@ -332,6 +335,17 @@ export default function App() {
               </option>
             ))}
           </select>
+        </label>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={englishOnly}
+            onChange={(e) => {
+              setEnglishOnly(e.target.checked);
+              writePref('englishOnly', e.target.checked ? '1' : '0');
+            }}
+          />
+          English only
         </label>
         <label className="toggle">
           <input type="checkbox" checked={onlyWithPoster} onChange={(e) => setOnlyWithPoster(e.target.checked)} />

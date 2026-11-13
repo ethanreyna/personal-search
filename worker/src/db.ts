@@ -1,5 +1,8 @@
 import type { Criteria, RawListing } from './sources/types';
-import { minYearsRequired, normalizeText } from './experience';
+import { looksEnglish, minYearsRequired, normalizeText } from './experience';
+
+const isEnglish = (title: string, description: string | null | undefined) =>
+  looksEnglish(normalizeText(`${title} ${description ?? ''}`)) ? 1 : 0;
 import { matchListing, matchVersion } from './match';
 
 function makeId(source: string, externalId: string): string {
@@ -19,8 +22,8 @@ export async function upsertListing(db: D1Database, listing: RawListing, criteri
       `INSERT INTO listings
         (id, source, external_id, title, company, location, remote, url, description, salary_min, salary_max, posted_at, fetched_at, score, status,
          applicants, poster_name, poster_title, poster_url, company_website, min_years, years_checked,
-         match_notes, score_version, desc_norm, norm_checked)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'new', ?15, ?16, ?17, ?18, ?19, ?20, 1, ?21, ?22, ?23, 1)
+         match_notes, score_version, desc_norm, norm_checked, english)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'new', ?15, ?16, ?17, ?18, ?19, ?20, 1, ?21, ?22, ?23, 1, ?24)
        ON CONFLICT(source, external_id) DO UPDATE SET
          title = excluded.title,
          company = excluded.company,
@@ -43,7 +46,8 @@ export async function upsertListing(db: D1Database, listing: RawListing, criteri
          match_notes = excluded.match_notes,
          score_version = excluded.score_version,
          desc_norm = excluded.desc_norm,
-         norm_checked = 1`
+         norm_checked = 1,
+         english = excluded.english`
     )
     .bind(
       id,
@@ -68,7 +72,8 @@ export async function upsertListing(db: D1Database, listing: RawListing, criteri
       minYears,
       match.notes,
       matchVersion(criteria),
-      normalizeText(listing.description)
+      normalizeText(listing.description),
+      isEnglish(listing.title, listing.description)
     )
     .run();
   return id;
@@ -112,16 +117,20 @@ export async function rescoreListings(db: D1Database, criteria: Criteria, batchS
  * remaining rows are picked up on later calls.
  */
 export async function backfillDerived(db: D1Database, batchSize = 200, maxBatches = 2): Promise<number> {
-  const stmt = db.prepare('UPDATE listings SET min_years = ?, years_checked = 1, desc_norm = ?, norm_checked = 1 WHERE id = ?');
+  const stmt = db.prepare(
+    'UPDATE listings SET min_years = ?, years_checked = 1, desc_norm = ?, norm_checked = 1, english = ? WHERE id = ?'
+  );
   let total = 0;
   for (let i = 0; i < maxBatches; i++) {
     const { results } = await db
-      .prepare('SELECT id, description FROM listings WHERE years_checked = 0 OR norm_checked = 0 LIMIT ?')
+      .prepare('SELECT id, title, description FROM listings WHERE years_checked = 0 OR norm_checked = 0 OR english IS NULL LIMIT ?')
       .bind(batchSize)
-      .all<{ id: string; description: string | null }>();
+      .all<{ id: string; title: string; description: string | null }>();
     if (!results.length) break;
     await db.batch(
-      results.map((r) => stmt.bind(minYearsRequired(r.description), normalizeText(r.description), r.id))
+      results.map((r) =>
+        stmt.bind(minYearsRequired(r.description), normalizeText(r.description), isEnglish(r.title, r.description), r.id)
+      )
     );
     total += results.length;
     if (results.length < batchSize) break;
@@ -181,6 +190,8 @@ export interface ListingFilters {
   excludeTitleWords?: string[];
   /** Hide listings whose description contains any of these whole words/phrases. */
   excludeDescriptionWords?: string[];
+  /** Hide listings detected as not English. Unchecked rows are kept. */
+  englishOnly?: boolean;
   sort?: string;
 }
 
@@ -234,6 +245,7 @@ export async function getListings(db: D1Database, opts: ListingFilters) {
     query += ` AND ${NORMALIZED_TITLE} NOT LIKE ?`;
     binds.push(`% ${word} %`);
   }
+  if (opts.englishOnly) query += ' AND coalesce(english, 1) = 1';
   for (const word of opts.excludeDescriptionWords ?? []) {
     query += " AND coalesce(desc_norm, '') NOT LIKE ?";
     binds.push(`% ${word} %`);

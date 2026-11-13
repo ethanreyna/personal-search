@@ -76,3 +76,34 @@ export function normalizeText(s: string | null | undefined): string {
     .trim();
   return ` ${words} `;
 }
+
+const ENGLISH_WORDS = new Set(
+  'the and to of you with for we our will in is are your this that be on as an or have from at by about who what work team'.split(' ')
+);
+// Common function words in the other languages that show up on these boards.
+const OTHER_WORDS = new Set(
+  [
+    'und der die das wir mit sie ist ein eine einen oder auf bei den von zu sich ihre unsere nicht auch sowie im',
+    'et le la les des vous nous avec pour une est dans sur du au aux votre notre',
+    'el los las con para por del una que su sus nuestro como',
+    'het een van wij voor met je jouw onze ons zijn',
+    'em os uma com voc nossa nosso ao',
+    'il della delle degli per che sono nel',
+  ].join(' ').split(' ')
+);
+
+/**
+ * Rough language check on normalized text (see normalizeText): true when
+ * English function words clearly outnumber those of other common languages.
+ * Too little text to judge counts as English, so nothing is hidden by mistake.
+ */
+export function looksEnglish(norm: string): boolean {
+  let en = 0;
+  let other = 0;
+  for (const w of norm.split(' ')) {
+    if (ENGLISH_WORDS.has(w)) en++;
+    else if (OTHER_WORDS.has(w)) other++;
+  }
+  if (en + other < 8) return true;
+  return en >= other * 2;
+}
