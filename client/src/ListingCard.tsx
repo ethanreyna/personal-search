@@ -80,8 +80,11 @@ export default function ListingCard({ listing: initial, onStatus }: Props) {
         <a href={l.url} target="_blank" rel="noreferrer" className="title">
           {l.title}
         </a>
-        <span className="score">{l.score}</span>
+        <span className={`score ${l.score >= 70 ? 'high' : l.score >= 45 ? 'mid' : 'low'}`} title="Match %">
+          {l.score}%
+        </span>
       </div>
+      {l.match_notes && <div className="match-notes">{l.match_notes}</div>}
       <div className="meta">
         {l.company && <span>{l.company}</span>}
         {l.location && <span>{l.location}</span>}

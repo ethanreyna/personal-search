@@ -23,6 +23,7 @@ export interface Listing {
   contact_status: 'found' | 'not_found' | 'no_poster' | null;
   contact_score: number | null;
   min_years: number | null;
+  match_notes: string | null;
   draft_subject: string | null;
   draft_body: string | null;
 }

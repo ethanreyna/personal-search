@@ -1,13 +1,16 @@
-import type { RawListing } from './sources/types';
+import type { Criteria, RawListing } from './sources/types';
 import { minYearsRequired } from './experience';
+import { matchListing, matchVersion } from './match';
 
 function makeId(source: string, externalId: string): string {
   return `${source}:${externalId}`;
 }
 
-export async function upsertListing(db: D1Database, listing: RawListing, score: number): Promise<string> {
+export async function upsertListing(db: D1Database, listing: RawListing, criteria: Criteria): Promise<string> {
   const id = makeId(listing.source, listing.externalId);
   const now = new Date().toISOString();
+  const minYears = minYearsRequired(listing.description);
+  const match = matchListing(listing, criteria, minYears);
 
   // Contact lookups, drafts and status are intentionally left out of the
   // conflict update so re-fetching a listing never wipes them.
@@ -15,8 +18,9 @@ export async function upsertListing(db: D1Database, listing: RawListing, score: 
     .prepare(
       `INSERT INTO listings
         (id, source, external_id, title, company, location, remote, url, description, salary_min, salary_max, posted_at, fetched_at, score, status,
-         applicants, poster_name, poster_title, poster_url, company_website, min_years, years_checked)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'new', ?15, ?16, ?17, ?18, ?19, ?20, 1)
+         applicants, poster_name, poster_title, poster_url, company_website, min_years, years_checked,
+         match_notes, score_version)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'new', ?15, ?16, ?17, ?18, ?19, ?20, 1, ?21, ?22)
        ON CONFLICT(source, external_id) DO UPDATE SET
          title = excluded.title,
          company = excluded.company,
@@ -35,7 +39,9 @@ export async function upsertListing(db: D1Database, listing: RawListing, score: 
          poster_url = COALESCE(excluded.poster_url, listings.poster_url),
          company_website = COALESCE(excluded.company_website, listings.company_website),
          min_years = excluded.min_years,
-         years_checked = 1`
+         years_checked = 1,
+         match_notes = excluded.match_notes,
+         score_version = excluded.score_version`
     )
     .bind(
       id,
@@ -51,16 +57,50 @@ export async function upsertListing(db: D1Database, listing: RawListing, score: 
       listing.salaryMax ?? null,
       listing.postedAt ?? null,
       now,
-      score,
+      match.score,
       listing.applicants ?? null,
       listing.posterName ?? null,
       listing.posterTitle ?? null,
       listing.posterUrl ?? null,
       listing.companyWebsite ?? null,
-      minYearsRequired(listing.description)
+      minYears,
+      match.notes,
+      matchVersion(criteria)
     )
     .run();
   return id;
+}
+
+/** Recomputes match % for rows scored with older criteria or an older formula. */
+export async function rescoreListings(db: D1Database, criteria: Criteria, batchSize = 200, maxBatches = 15): Promise<number> {
+  const version = matchVersion(criteria);
+  const stmt = db.prepare('UPDATE listings SET score = ?, match_notes = ?, score_version = ? WHERE id = ?');
+  let total = 0;
+  for (let i = 0; i < maxBatches; i++) {
+    const { results } = await db
+      .prepare(
+        `SELECT id, source, external_id, title, location, remote, url, description, min_years
+         FROM listings WHERE score_version IS NULL OR score_version != ? LIMIT ?`
+      )
+      .bind(version, batchSize)
+      .all<{ id: string; source: string; external_id: string; title: string; location: string | null;
+             remote: number; url: string; description: string | null; min_years: number | null }>();
+    if (!results.length) break;
+    await db.batch(
+      results.map((r) => {
+        const m = matchListing(
+          { source: r.source, externalId: r.external_id, title: r.title, url: r.url,
+            location: r.location ?? undefined, remote: !!r.remote, description: r.description ?? undefined },
+          criteria,
+          r.min_years
+        );
+        return stmt.bind(m.score, m.notes, version, r.id);
+      })
+    );
+    total += results.length;
+    if (results.length < batchSize) break;
+  }
+  return total;
 }
 
 /** Parses experience requirements for rows stored before that column existed. */
@@ -109,7 +149,19 @@ export interface ListingFilters {
   excludeTitleWords?: string[];
   /** Hide listings whose description contains any of these whole words/phrases. */
   excludeDescriptionWords?: string[];
+  sort?: string;
 }
+
+// Unknown values sort last in every order.
+const SORTS: Record<string, string> = {
+  score: 'score DESC, fetched_at DESC',
+  newest: '(posted_at IS NULL), posted_at DESC, score DESC',
+  oldest: '(posted_at IS NULL), posted_at ASC, score DESC',
+  applicants: '(applicants IS NULL), applicants ASC, score DESC',
+  years: '(min_years IS NULL), min_years ASC, score DESC',
+  salary: '(salary_max IS NULL AND salary_min IS NULL), coalesce(salary_max, salary_min) DESC, score DESC',
+  company: "(company IS NULL OR company = ''), lower(company) ASC, score DESC",
+};
 
 export async function getListings(db: D1Database, opts: ListingFilters) {
   const limit = opts.limit ?? 100;
@@ -154,7 +206,7 @@ export async function getListings(db: D1Database, opts: ListingFilters) {
     query += ` AND ${NORMALIZED_DESCRIPTION} NOT LIKE ?`;
     binds.push(`% ${word} %`);
   }
-  query += ' ORDER BY score DESC, fetched_at DESC LIMIT ?';
+  query += ` ORDER BY ${SORTS[opts.sort ?? ''] ?? SORTS.score} LIMIT ?`;
   binds.push(limit);
 
   const { results } = await db.prepare(query).bind(...binds).all();

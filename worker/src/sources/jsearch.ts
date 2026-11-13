@@ -1,20 +1,38 @@
-import type { Env, Criteria, RawListing } from './types';
+import type { Env, RawListing, SearchParams } from './types';
+import { shortLocation } from './query';
 
-export async function fetchJSearch(env: Env, criteria: Criteria): Promise<RawListing[]> {
+function datePosted(days?: number): string {
+  if (!days) return 'all';
+  if (days <= 1) return 'today';
+  if (days <= 3) return '3days';
+  if (days <= 7) return 'week';
+  return 'month';
+}
+
+export async function fetchJSearch(env: Env, p: SearchParams): Promise<RawListing[]> {
   if (!env.RAPIDAPI_KEY) return [];
+  const where = shortLocation(p.location);
+  const query = p.remoteOnly
+    ? `${p.keywords} remote`
+    : where
+      ? `${p.keywords} in ${where} or remote`
+      : p.keywords;
+  const qs = new URLSearchParams({
+    query,
+    num_pages: '1',
+    country: 'us',
+    date_posted: datePosted(p.postedWithinDays),
+  });
+  if (p.remoteOnly) qs.set('remote_jobs_only', 'true');
 
-  const query = `${criteria.titles[0]} in Houston, TX or remote`;
-  const url = `https://jsearch.p.rapidapi.com/search?query=${encodeURIComponent(query)}&num_pages=1&date_posted=week`;
-
-  const res = await fetch(url, {
+  const res = await fetch(`https://jsearch.p.rapidapi.com/search?${qs.toString()}`, {
     headers: {
       'X-RapidAPI-Key': env.RAPIDAPI_KEY,
       'X-RapidAPI-Host': 'jsearch.p.rapidapi.com',
     },
   });
-  if (!res.ok) return [];
+  if (!res.ok) throw new Error(`jsearch ${res.status}`);
   const data: any = await res.json();
-
   return (data.data ?? []).map((r: any) => ({
     source: 'jsearch',
     externalId: String(r.job_id),
@@ -27,5 +45,6 @@ export async function fetchJSearch(env: Env, criteria: Criteria): Promise<RawLis
     salaryMin: r.job_min_salary ?? undefined,
     salaryMax: r.job_max_salary ?? undefined,
     postedAt: r.job_posted_at_datetime_utc,
+    companyWebsite: r.employer_website || undefined,
   })) as RawListing[];
 }

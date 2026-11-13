@@ -1,13 +1,12 @@
 import { Hono } from 'hono';
 import type { Env, SearchParams } from './sources/types';
-import { fetchAllSources } from './sources';
-import { searchLinkedIn } from './sources/linkedin';
-import { scoreListing } from './match';
+import { fetchAllSources, searchSources } from './sources';
 import { findPosterEmail } from './contact';
 import { draftOutreach } from './draft';
 import { parseWordList } from './experience';
 import {
   backfillMinYears,
+  rescoreListings,
   upsertListing,
   getListings,
   getListing,
@@ -37,8 +36,10 @@ const num = (v: string | undefined) => (v && !isNaN(Number(v)) ? Number(v) : und
 
 app.get('/api/listings', async (c) => {
   const q = (k: string) => c.req.query(k) || undefined;
-  // Picks up rows stored before experience parsing existed; no-op once done.
+  // Catch up rows stored before experience parsing existed, and re-score
+  // anything computed with older criteria. Both are no-ops once done.
   await backfillMinYears(c.env.DB);
+  await rescoreListings(c.env.DB, getCriteria(c.env));
   const rows = await getListings(c.env.DB, {
     status: q('status'),
     minScore: num(q('minScore')),
@@ -51,30 +52,33 @@ app.get('/api/listings', async (c) => {
     maxYears: num(q('maxYears')),
     excludeTitleWords: parseWordList(q('excludeTitle')),
     excludeDescriptionWords: parseWordList(q('excludeText')),
+    sort: q('sort'),
   });
   return c.json(rows);
 });
 
-// On-demand keyword search. Posting age and remote are applied by the
-// search itself; the applicant cap is applied when listing results.
+// On-demand keyword search across every configured source. Posting age,
+// location and remote are passed to each source; the applicant cap and word
+// filters are applied when listing results.
 app.post('/api/search', async (c) => {
   const body = await c.req.json<SearchParams>();
   if (!body.keywords?.trim()) return c.json({ error: 'keywords required' }, 400);
 
   const startedAt = new Date().toISOString();
-  try {
-    const found = await searchLinkedIn(c.env, { ...body, keywords: body.keywords.trim() });
-    for (const l of found) {
-      await upsertListing(c.env.DB, l, scoreListing(l, getCriteria(c.env)));
-    }
-    await backfillMinYears(c.env.DB);
-    await recordSyncRun(c.env.DB, startedAt, new Date().toISOString(), ['linkedin'], [], found.length);
-    return c.json({ processed: found.length });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await recordSyncRun(c.env.DB, startedAt, new Date().toISOString(), [], ['linkedin'], 0);
-    return c.json({ error: message }, 502);
+  const criteria = getCriteria(c.env);
+  const result = await searchSources(c.env, { ...body, keywords: body.keywords.trim() });
+  for (const l of result.listings) {
+    await upsertListing(c.env.DB, l, criteria);
   }
+  await backfillMinYears(c.env.DB);
+  await recordSyncRun(c.env.DB, startedAt, new Date().toISOString(), result.ok, result.failed, result.listings.length);
+
+  const summary = {
+    processed: result.listings.length,
+    counts: result.counts,
+    errors: result.errors,
+  };
+  return c.json(summary, result.ok.length === 0 ? 502 : 200);
 });
 
 app.post('/api/listings/:id/contact', async (c) => {
@@ -95,7 +99,8 @@ app.post('/api/listings/:id/draft', async (c) => {
   const row = await getListing(c.env.DB, id);
   if (!row) return c.json({ error: 'not found' }, 404);
 
-  const profile = c.env.CRITERIA_JSON ? getCriteria(c.env).outreach : undefined;  if (!profile?.name || !profile.background?.length) {
+  const profile = c.env.CRITERIA_JSON ? getCriteria(c.env).outreach : undefined;
+  if (!profile?.name || !profile.background?.length) {
     return c.json(
       { error: 'Set the CRITERIA_JSON secret (with an "outreach" section) before drafting' },
       400
@@ -146,8 +151,7 @@ async function runSync(env: Env) {
   const { listings, ok, failed } = await fetchAllSources(env, criteria);
 
   for (const listing of listings) {
-    const score = scoreListing(listing, criteria);
-    await upsertListing(env.DB, listing, score);
+    await upsertListing(env.DB, listing, criteria);
   }
   await backfillMinYears(env.DB);
 

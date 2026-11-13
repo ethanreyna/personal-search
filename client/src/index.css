@@ -89,6 +89,16 @@ button.active { background: var(--accent); border-color: var(--accent); color: w
   font-variant-numeric: tabular-nums;
   color: var(--accent);
   font-weight: 700;
+  white-space: nowrap;
+}
+.score.high { color: #50c878; }
+.score.mid { color: #ffaa3c; }
+.score.low { color: var(--muted); }
+
+.match-notes {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-top: 3px;
 }
 
 .meta {

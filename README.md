@@ -86,10 +86,20 @@ part of the build.
 
 ## On-demand search and outreach
 
-The dashboard's search panel runs a keyword search through a hosted Apify
-actor (set `APIFY_ACTOR` to override the default). "Posted within" and
-"remote only" narrow the search itself; the applicant cap filters what's
-shown, so it can be changed without re-fetching.
+The dashboard's search panel runs one keyword search across every
+configured source in parallel: a hosted Apify actor (set `APIFY_ACTOR` to
+override the default), Adzuna and JSearch when their keys are set, and the
+free feeds. Keywords, location, "posted within" and "remote only" go to each
+source; sources without a search API are matched on keywords locally. The
+applicant cap, experience cap and title/description word lists filter what's
+shown, so they can be changed without re-fetching. Results can be sorted by
+match, date, applicants, experience asked, salary or company.
+
+Each listing gets a match % against the criteria file: title fit (30),
+skill coverage of the technologies the listing names (40), experience asked
+versus `targetYearsExperience` (20) and location (10). The card lists which
+named skills are covered and which are missing. Scores are recomputed
+automatically after the criteria change.
 
 Listings that include the poster's profile get a "Find email" button
 (Hunter email-finder; a credit is only spent when an address is found,

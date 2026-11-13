@@ -25,6 +25,32 @@ const DEFAULT_FORM: SearchForm = {
   limit: 50,
 };
 
+const SOURCES = ['linkedin', 'adzuna', 'jsearch', 'remotive', 'remoteok', 'arbeitnow'];
+const SORTS: Array<[string, string]> = [
+  ['score', 'Best match'],
+  ['newest', 'Newest'],
+  ['applicants', 'Fewest applicants'],
+  ['years', 'Least experience asked'],
+  ['salary', 'Highest salary'],
+  ['oldest', 'Oldest'],
+  ['company', 'Company A-Z'],
+];
+
+function readPref(key: string, fallback: string): string {
+  try {
+    return localStorage.getItem(`pref:${key}`) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+function writePref(key: string, value: string) {
+  try {
+    localStorage.setItem(`pref:${key}`, value);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 function loadForm(): SearchForm {
   try {
     const raw = localStorage.getItem(FORM_KEY);
@@ -39,7 +65,8 @@ export default function App() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [status, setStatus] = useState('new');
   const [minScore, setMinScore] = useState(0);
-  const [onlySearchResults, setOnlySearchResults] = useState(true);
+  const [source, setSource] = useState(() => readPref('source', ''));
+  const [sort, setSort] = useState(() => readPref('sort', 'score'));
   const [onlyWithPoster, setOnlyWithPoster] = useState(false);
   const [form, setForm] = useState<SearchForm>(loadForm);
   const [loading, setLoading] = useState(false);
@@ -74,7 +101,8 @@ export default function App() {
       const params = new URLSearchParams();
       if (status) params.set('status', status);
       if (minScore) params.set('minScore', String(minScore));
-      if (onlySearchResults) params.set('source', 'linkedin');
+      if (source) params.set('source', source);
+      params.set('sort', sort);
       if (onlyWithPoster) params.set('hasPoster', '1');
       if (form.maxApplicants !== '') params.set('maxApplicants', String(form.maxApplicants));
       if (form.postedWithinDays) params.set('postedWithinDays', String(form.postedWithinDays));
@@ -93,7 +121,8 @@ export default function App() {
   }, [
     status,
     minScore,
-    onlySearchResults,
+    source,
+    sort,
     onlyWithPoster,
     form.maxApplicants,
     form.postedWithinDays,
@@ -136,8 +165,13 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Search failed (${res.status})`);
-      setInfo(`Fetched ${data.processed} results. Filters below are applied to what's shown.`);
-      setOnlySearchResults(true);
+      const counts = Object.entries(data.counts ?? {}).map(([k, v]) => `${k} ${v}`).join(', ');
+      const errors = Object.entries(data.errors ?? {}).map(([k, v]) => `${k}: ${v}`).join('; ');
+      setInfo(
+        `Fetched ${data.processed} results (${counts || 'none'}).` +
+          (errors ? ` Failed: ${errors}.` : '') +
+          ` Filters below are applied to what's shown.`
+      );
       setStatus('new');
       await load();
     } catch (err) {
@@ -164,7 +198,7 @@ export default function App() {
       <header>
         <h1>Dashboard</h1>
         <button onClick={runSync} disabled={syncing}>
-          {syncing ? 'Syncing…' : 'Sync other sources'}
+          {syncing ? 'Syncing…' : 'Run scheduled sync'}
         </button>
       </header>
 
@@ -266,16 +300,45 @@ export default function App() {
             {t.label}
           </button>
         ))}
-        <label className="toggle">
-          <input type="checkbox" checked={onlySearchResults} onChange={(e) => setOnlySearchResults(e.target.checked)} />
-          LinkedIn only
+        <label className="minscore">
+          Source
+          <select
+            value={source}
+            onChange={(e) => {
+              setSource(e.target.value);
+              writePref('source', e.target.value);
+            }}
+          >
+            <option value="">All</option>
+            {SOURCES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="minscore">
+          Sort
+          <select
+            value={sort}
+            onChange={(e) => {
+              setSort(e.target.value);
+              writePref('sort', e.target.value);
+            }}
+          >
+            {SORTS.map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="toggle">
           <input type="checkbox" checked={onlyWithPoster} onChange={(e) => setOnlyWithPoster(e.target.checked)} />
           Has poster
         </label>
         <label className="minscore">
-          Min score
+          Min match %
           <input type="number" min={0} max={100} value={minScore} onChange={(e) => setMinScore(Number(e.target.value))} />
         </label>
       </nav>
