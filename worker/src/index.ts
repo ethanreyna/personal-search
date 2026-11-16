@@ -3,6 +3,7 @@ import type { Env, SearchParams } from './sources/types';
 import { fetchAllSources, searchSources } from './sources';
 import { findPosterEmail } from './contact';
 import { draftOutreach } from './draft';
+import { tailorDocument } from './document';
 import { parseWordList } from './experience';
 import {
   backfillDerived,
@@ -14,6 +15,7 @@ import {
   setListingStatus,
   setContact,
   setDraft,
+  setTailoredDocument,
   recordSyncRun,
 } from './db';
 import { getCriteria } from './criteria';
@@ -112,6 +114,26 @@ app.post('/api/listings/:id/draft', async (c) => {
     const draft = await draftOutreach(c.env, profile, row as any);
     await setDraft(c.env.DB, id, draft.subject, draft.body);
     return c.json(draft);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 502);
+  }
+});
+
+// Tailored PDF content for a listing. Returns the saved one unless ?redo=1.
+app.post('/api/listings/:id/document', async (c) => {
+  const id = c.req.param('id');
+  const row = (await getListing(c.env.DB, id)) as any;
+  if (!row) return c.json({ error: 'not found' }, 404);
+  if (row.tailored_doc && c.req.query('redo') !== '1') return c.json(JSON.parse(row.tailored_doc));
+
+  const source = c.env.CRITERIA_JSON ? getCriteria(c.env).document : undefined;
+  if (!source?.name || !source.experience?.length) {
+    return c.json({ error: 'Add a "document" section to the CRITERIA_JSON secret first' }, 400);
+  }
+  try {
+    const doc = await tailorDocument(c.env, source, row);
+    await setTailoredDocument(c.env.DB, id, JSON.stringify(doc));
+    return c.json(doc);
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 502);
   }

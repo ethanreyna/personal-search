@@ -24,6 +24,7 @@ export interface Listing {
   contact_score: number | null;
   min_years: number | null;
   match_notes: string | null;
+  has_document: number;
   draft_subject: string | null;
   draft_body: string | null;
 }
@@ -38,4 +39,16 @@ export interface SearchForm {
   excludeTitle: string;
   excludeText: string;
   limit: number;
+}
+
+/** Tailored document returned by the worker and rendered to PDF in the browser. */
+export interface TailoredDocument {
+  fileName: string;
+  name: string;
+  contact: string[];
+  summary: string;
+  education: Array<{ school: string; detail: string; date: string }>;
+  skills: Array<{ label: string; items: string[] }>;
+  experience: Array<{ company: string; title: string; dates: string; bullets: string[] }>;
+  changes: string;
 }

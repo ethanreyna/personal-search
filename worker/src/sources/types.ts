@@ -26,6 +26,20 @@ export interface OutreachProfile {
   links?: string[];
 }
 
+/** Source for the tailored PDF. Lives only in the private criteria file. */
+export interface ProfileDocument {
+  /** Download name, e.g. "Jane Doe.pdf". Defaults to "<name>.pdf". */
+  fileName?: string;
+  name: string;
+  /** Lines under the name, e.g. "Email: ...". */
+  contact: string[];
+  education: Array<{ school: string; detail: string; date: string }>;
+  skills: Array<{ label: string; items: string[] }>;
+  experience: Array<{ company: string; title: string; dates: string; bullets: string[] }>;
+  /** True facts not tied to an employer; may be used in the summary or skills. */
+  extraFacts?: string[];
+}
+
 export interface Criteria {
   titles: string[];
   mustHaveAnySkills: string[];
@@ -36,6 +50,7 @@ export interface Criteria {
   targetYearsExperience: number;
   notes?: string;
   outreach?: OutreachProfile;
+  document?: ProfileDocument;
 }
 
 /** On-demand search parameters entered in the dashboard. */

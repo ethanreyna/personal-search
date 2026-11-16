@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { Listing } from './types';
+import type { Listing, TailoredDocument } from './types';
+import { downloadDocument } from './pdf';
 
 interface Props {
   listing: Listing;
@@ -10,7 +11,7 @@ const enc = encodeURIComponent;
 
 export default function ListingCard({ listing: initial, onStatus }: Props) {
   const [l, setL] = useState(initial);
-  const [busy, setBusy] = useState<'' | 'contact' | 'draft' | 'save'>('');
+  const [busy, setBusy] = useState<'' | 'contact' | 'draft' | 'save' | 'doc'>('');
   const [note, setNote] = useState<string | null>(null);
   const [showDraft, setShowDraft] = useState(!!initial.draft_body);
   const [copied, setCopied] = useState(false);
@@ -42,6 +43,25 @@ export default function ListingCard({ listing: initial, onStatus }: Props) {
       setShowDraft(true);
     } catch (err) {
       setNote(err instanceof Error ? err.message : 'Draft failed');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  // Generates (or reuses) the tailored document, then downloads the PDF.
+  const tailoredPdf = async (redo = false) => {
+    setBusy('doc');
+    setNote(null);
+    try {
+      const res = await fetch(`/api/listings/${enc(l.id)}/document${redo ? '?redo=1' : ''}`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Failed (${res.status})`);
+      const doc = data as TailoredDocument;
+      await downloadDocument(doc);
+      setL({ ...l, has_document: 1 });
+      if (doc.changes) setNote(doc.changes);
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'PDF failed');
     } finally {
       setBusy('');
     }
@@ -138,6 +158,14 @@ export default function ListingCard({ listing: initial, onStatus }: Props) {
           {busy === 'draft' ? 'Writing…' : l.draft_body ? 'Redo draft' : 'Draft email'}
         </button>
         {l.draft_body && !showDraft && <button onClick={() => setShowDraft(true)}>Show draft</button>}
+        <button onClick={() => tailoredPdf(false)} disabled={!!busy} title="Tailor to this listing and download">
+          {busy === 'doc' ? 'Tailoring…' : l.has_document ? 'Download PDF' : 'Tailored PDF'}
+        </button>
+        {!!l.has_document && (
+          <button onClick={() => tailoredPdf(true)} disabled={!!busy} title="Generate a new version">
+            Redo PDF
+          </button>
+        )}
         <span className="spacer" />
         {l.status !== 'saved' && <button onClick={() => onStatus(l.id, 'saved')}>Save</button>}
         {l.status !== 'applied' && <button onClick={() => onStatus(l.id, 'applied')}>Applied</button>}
