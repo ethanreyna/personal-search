@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Listing, TailoredDocument } from './types';
-import { downloadDocument } from './pdf';
+import { downloadDocument, downloadLetter, type LetterContent } from './pdf';
 
 interface Props {
   listing: Listing;
@@ -11,7 +11,9 @@ const enc = encodeURIComponent;
 
 export default function ListingCard({ listing: initial, onStatus }: Props) {
   const [l, setL] = useState(initial);
-  const [busy, setBusy] = useState<'' | 'contact' | 'draft' | 'save' | 'doc'>('');
+  const [busy, setBusy] = useState<'' | 'contact' | 'draft' | 'save' | 'doc' | 'letter' | 'letter-pdf'>('');
+  const [letter, setLetter] = useState<LetterContent | null>(null);
+  const [showLetter, setShowLetter] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [showDraft, setShowDraft] = useState(!!initial.draft_body);
   const [copied, setCopied] = useState(false);
@@ -57,13 +59,63 @@ export default function ListingCard({ listing: initial, onStatus }: Props) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Failed (${res.status})`);
       const doc = data as TailoredDocument;
-      await downloadDocument(doc);
+      await downloadDocument(doc, l.company);
       setL({ ...l, has_document: 1 });
       if (doc.changes) setNote(doc.changes);
     } catch (err) {
       setNote(err instanceof Error ? err.message : 'PDF failed');
     } finally {
       setBusy('');
+    }
+  };
+
+  // Loads the saved letter, or writes one (redo forces a new one).
+  const openLetter = async (redo = false) => {
+    setBusy('letter');
+    setNote(null);
+    try {
+      const res = await fetch(`/api/listings/${enc(l.id)}/letter${redo ? '?redo=1' : ''}`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Failed (${res.status})`);
+      setLetter(data as LetterContent);
+      setShowLetter(true);
+      setL({ ...l, has_letter: 1 });
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'Letter failed');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const saveLetter = async () => {
+    if (!letter) return;
+    await fetch(`/api/listings/${enc(l.id)}/letter`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: letter.body }),
+    });
+  };
+
+  const letterPdf = async () => {
+    if (!letter) return;
+    setBusy('letter-pdf');
+    try {
+      await saveLetter();
+      await downloadLetter(letter, l.company);
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'PDF failed');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const copyLetter = async () => {
+    try {
+      await navigator.clipboard.writeText(letter?.body ?? '');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setNote('Clipboard not available');
     }
   };
 
@@ -166,6 +218,11 @@ export default function ListingCard({ listing: initial, onStatus }: Props) {
             Redo PDF
           </button>
         )}
+        {!showLetter && (
+          <button onClick={() => openLetter(false)} disabled={!!busy}>
+            {busy === 'letter' ? 'Writing letter…' : l.has_letter ? 'Show letter' : 'Write letter'}
+          </button>
+        )}
         <span className="spacer" />
         {l.status !== 'saved' && <button onClick={() => onStatus(l.id, 'saved')}>Save</button>}
         {l.status !== 'applied' && <button onClick={() => onStatus(l.id, 'applied')}>Applied</button>}
@@ -174,6 +231,27 @@ export default function ListingCard({ listing: initial, onStatus }: Props) {
       </div>
 
       {note && <p className="note">{note}</p>}
+
+      {showLetter && letter && (
+        <div className="draft">
+          <textarea
+            rows={16}
+            value={letter.body}
+            onChange={(e) => setLetter({ ...letter, body: e.target.value })}
+            onBlur={saveLetter}
+          />
+          <div className="actions">
+            <button onClick={letterPdf} disabled={!!busy}>
+              {busy === 'letter-pdf' ? 'Building…' : 'Download letter PDF'}
+            </button>
+            <button onClick={copyLetter}>{copied ? 'Copied' : 'Copy'}</button>
+            <button onClick={() => openLetter(true)} disabled={!!busy}>
+              {busy === 'letter' ? 'Writing…' : 'Redo letter'}
+            </button>
+            <button onClick={() => setShowLetter(false)}>Hide</button>
+          </div>
+        </div>
+      )}
 
       {showDraft && l.draft_body !== null && (
         <div className="draft">

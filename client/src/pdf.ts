@@ -8,7 +8,7 @@ const WIDTH = PAGE_W - MARGIN * 2;
 type JsPDF = import('jspdf').jsPDF;
 
 /**
- * Lays the document out at a given body font size. With `pdf` null it only
+ * Lays the document out at a given body font size. With `draw` false it only
  * measures, so the caller can pick the largest size that fits one page.
  * Returns the y position after the last line (may exceed the page when measuring).
  */
@@ -135,6 +135,89 @@ export async function buildPdf(d: TailoredDocument): Promise<JsPDF> {
   return pdf;
 }
 
-export async function downloadDocument(d: TailoredDocument): Promise<void> {
-  (await buildPdf(d)).save(d.fileName);
+/** "Jane Doe Resume.pdf" + "Acme, Inc." -> "Jane Doe Resume - Acme, Inc.pdf" (filename-safe). */
+export function withOrganization(fileName: string, organization: string | null | undefined): string {
+  const base = fileName.replace(/\.pdf$/i, '');
+  const org = (organization ?? '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/, '')
+    .slice(0, 60)
+    .trim();
+  return `${org ? `${base} - ${org}` : base}.pdf`;
+}
+
+export async function downloadDocument(d: TailoredDocument, organization?: string | null): Promise<void> {
+  (await buildPdf(d)).save(withOrganization(d.fileName, organization));
+}
+
+export interface LetterContent {
+  name: string;
+  contact: string[];
+  body: string;
+  fileName: string;
+}
+
+/** Plain one-page letter: name and contact at the top, date, then the body as written. */
+export async function buildLetterPdf(l: LetterContent): Promise<JsPDF> {
+  const { jsPDF } = await import('jspdf');
+  const pdf = new jsPDF({ unit: 'pt', format: 'letter' });
+  pdf.setProperties({ title: l.name, author: l.name });
+
+  const margin = 72;
+  const width = PAGE_W - margin * 2;
+  const paragraphs = l.body.replace(/\r/g, '').split('\n');
+
+  // Shrink slightly for long letters so they stay on one page.
+  let size = 11.5;
+  const measure = (s: number) => {
+    pdf.setFont('times', 'normal');
+    pdf.setFontSize(s);
+    const lines = paragraphs.reduce(
+      (n, p) => n + (p.trim() ? (pdf.splitTextToSize(p.trim(), width) as string[]).length : 0.6),
+      0
+    );
+    return lines * s * 1.3;
+  };
+  while (size > 9.5 && margin + 130 + measure(size) > PAGE_H - margin) size -= 0.5;
+
+  let y = margin;
+  pdf.setFont('times', 'bold');
+  pdf.setFontSize(18);
+  y += 18;
+  pdf.text(l.name, margin, y);
+  pdf.setFont('times', 'normal');
+  pdf.setFontSize(10);
+  y += 4;
+  for (const c of l.contact) {
+    y += 12;
+    pdf.text(c, margin, y);
+  }
+
+  pdf.setFontSize(size);
+  const lh = size * 1.3;
+  y += lh * 2;
+  pdf.text(new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }), margin, y);
+  y += lh;
+
+  for (const p of paragraphs) {
+    if (!p.trim()) {
+      y += lh * 0.6;
+      continue;
+    }
+    for (const line of pdf.splitTextToSize(p.trim(), width) as string[]) {
+      y += lh;
+      if (y > PAGE_H - margin) {
+        pdf.addPage();
+        y = margin + lh;
+      }
+      pdf.text(line, margin, y);
+    }
+  }
+  return pdf;
+}
+
+export async function downloadLetter(l: LetterContent, organization?: string | null): Promise<void> {
+  (await buildLetterPdf(l)).save(withOrganization(l.fileName, organization));
 }

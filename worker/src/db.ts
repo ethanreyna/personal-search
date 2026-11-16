@@ -212,7 +212,7 @@ export async function getListings(db: D1Database, opts: ListingFilters) {
   let query = `SELECT id, source, external_id, title, company, location, remote, url, description, salary_min,
       salary_max, posted_at, fetched_at, score, status, applicants, poster_name, poster_title, poster_url,
       company_website, contact_email, contact_status, contact_score, min_years, match_notes, draft_subject,
-      draft_body, (tailored_doc IS NOT NULL) AS has_document
+      draft_body, (tailored_doc IS NOT NULL) AS has_document, (letter_body IS NOT NULL) AS has_letter
     FROM listings WHERE 1=1`;
   const binds: unknown[] = [];
 
@@ -308,4 +308,8 @@ export async function recordSyncRun(
 
 export async function setTailoredDocument(db: D1Database, id: string, doc: string) {
   await db.prepare('UPDATE listings SET tailored_doc = ? WHERE id = ?').bind(doc, id).run();
+}
+
+export async function setLetter(db: D1Database, id: string, body: string) {
+  await db.prepare('UPDATE listings SET letter_body = ? WHERE id = ?').bind(body, id).run();
 }

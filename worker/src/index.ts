@@ -4,6 +4,7 @@ import { fetchAllSources, searchSources } from './sources';
 import { findPosterEmail } from './contact';
 import { draftOutreach } from './draft';
 import { tailorDocument } from './document';
+import { writeLetter } from './letter';
 import { parseWordList } from './experience';
 import {
   backfillDerived,
@@ -16,6 +17,7 @@ import {
   setContact,
   setDraft,
   setTailoredDocument,
+  setLetter,
   recordSyncRun,
 } from './db';
 import { getCriteria, getDocumentSource } from './criteria';
@@ -137,6 +139,40 @@ app.post('/api/listings/:id/document', async (c) => {
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 502);
   }
+});
+
+// Letter for a listing, with the header details the PDF needs. Returns the saved one unless ?redo=1.
+app.post('/api/listings/:id/letter', async (c) => {
+  const id = c.req.param('id');
+  const row = (await getListing(c.env.DB, id)) as any;
+  if (!row) return c.json({ error: 'not found' }, 404);
+  const source = getDocumentSource(c.env);
+  if (!source?.name || !source.experience?.length) {
+    return c.json({ error: 'Set the DOCUMENT_JSON secret first (pnpm run document:upload)' }, 400);
+  }
+  const header = {
+    name: source.name,
+    contact: source.contact,
+    fileName: source.letterFileName || `${source.name} Letter.pdf`,
+  };
+  if (row.letter_body && c.req.query('redo') !== '1') return c.json({ ...header, body: row.letter_body });
+
+  try {
+    const outreach = c.env.CRITERIA_JSON ? getCriteria(c.env).outreach : undefined;
+    const body = await writeLetter(c.env, source, outreach, row);
+    await setLetter(c.env.DB, id, body);
+    return c.json({ ...header, body });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 502);
+  }
+});
+
+// Save manual edits to a letter.
+app.put('/api/listings/:id/letter', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json<{ body: string }>();
+  await setLetter(c.env.DB, id, body.body ?? '');
+  return c.json({ ok: true });
 });
 
 // Save manual edits to a draft.

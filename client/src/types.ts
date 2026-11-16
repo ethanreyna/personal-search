@@ -25,6 +25,7 @@ export interface Listing {
   min_years: number | null;
   match_notes: string | null;
   has_document: number;
+  has_letter: number;
   draft_subject: string | null;
   draft_body: string | null;
 }

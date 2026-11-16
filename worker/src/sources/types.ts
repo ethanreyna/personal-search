@@ -28,8 +28,10 @@ export interface OutreachProfile {
 
 /** Source for the tailored PDF: the private worker/document.json, via the DOCUMENT_JSON secret. */
 export interface ProfileDocument {
-  /** Download name, e.g. "Jane Doe.pdf". Defaults to "<name>.pdf". */
+  /** Download name, e.g. "Jane Doe.pdf". Defaults to "<name>.pdf". The organization is appended. */
   fileName?: string;
+  /** Download name for the letter. Defaults to "<name> Letter.pdf". The organization is appended. */
+  letterFileName?: string;
   name: string;
   /** Lines under the name, e.g. "Email: ...". */
   contact: string[];
