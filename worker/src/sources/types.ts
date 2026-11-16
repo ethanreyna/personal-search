@@ -26,7 +26,7 @@ export interface OutreachProfile {
   links?: string[];
 }
 
-/** Source for the tailored PDF. Lives only in the private criteria file. */
+/** Source for the tailored PDF: the private worker/document.json, via the DOCUMENT_JSON secret. */
 export interface ProfileDocument {
   /** Download name, e.g. "Jane Doe.pdf". Defaults to "<name>.pdf". */
   fileName?: string;
@@ -50,7 +50,6 @@ export interface Criteria {
   targetYearsExperience: number;
   notes?: string;
   outreach?: OutreachProfile;
-  document?: ProfileDocument;
 }
 
 /** On-demand search parameters entered in the dashboard. */
@@ -76,4 +75,6 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
   /** Contents of the private worker/criteria.json. */
   CRITERIA_JSON?: string;
+  /** Contents of the private worker/document.json. */
+  DOCUMENT_JSON?: string;
 }

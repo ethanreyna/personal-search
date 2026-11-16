@@ -1,4 +1,4 @@
-import type { Criteria, Env } from './sources/types';
+import type { Criteria, Env, ProfileDocument } from './sources/types';
 import example from '../criteria.example.json';
 
 let cached: { raw: string; value: Criteria } | null = null;
@@ -20,5 +20,16 @@ export function getCriteria(env: Env): Criteria {
   } catch (err) {
     console.error('CRITERIA_JSON is not valid JSON, using example criteria', err);
     return example as Criteria;
+  }
+}
+
+/** Source for the tailored PDF, from the DOCUMENT_JSON secret. Undefined when unset or invalid. */
+export function getDocumentSource(env: Env): ProfileDocument | undefined {
+  if (!env.DOCUMENT_JSON) return undefined;
+  try {
+    return JSON.parse(env.DOCUMENT_JSON) as ProfileDocument;
+  } catch (err) {
+    console.error('DOCUMENT_JSON is not valid JSON', err);
+    return undefined;
   }
 }

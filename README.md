@@ -108,6 +108,14 @@ short message from the `outreach` section of `worker/criteria.json`; the
 draft is editable and saved per listing. Nothing is ever sent
 automatically.
 
+"Tailored PDF" rewrites the profile document in `worker/document.json`
+(private, gitignored; copy `worker/document.example.json` to start) to
+emphasize what a listing asks for, using only facts already in the file.
+Names, contact details, titles and dates are copied as-is. The PDF is laid out
+in the browser and downloaded with the `fileName` from that file. Upload it
+with `pnpm run document:upload` (secrets are capped at about 5 kB, so keep
+it concise); `criteria:upload` works the same way for the criteria file.
+
 Schema changes live in `worker/migrations/` and are applied with
 `pnpm run db:migrate:local` / `pnpm run db:migrate:remote`.
 

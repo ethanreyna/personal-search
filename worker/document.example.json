@@ -1,0 +1,19 @@
+{
+  "fileName": "Your Name.pdf",
+  "name": "Your Name",
+  "contact": ["Email: you@example.com", "Portfolio: example.com"],
+  "education": [{ "school": "Your School", "detail": "Degree - Field", "date": "May 2020" }],
+  "skills": [
+    { "label": "Frontend", "items": ["TypeScript", "React"] },
+    { "label": "Backend", "items": ["Node.js", "PostgreSQL"] }
+  ],
+  "experience": [
+    {
+      "company": "Company",
+      "title": "Title",
+      "dates": "Jan 2023 - Present",
+      "bullets": ["What you built, with what, and the result."]
+    }
+  ],
+  "extraFacts": ["Optional true facts not tied to one employer"]
+}

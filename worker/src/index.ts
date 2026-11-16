@@ -18,7 +18,7 @@ import {
   setTailoredDocument,
   recordSyncRun,
 } from './db';
-import { getCriteria } from './criteria';
+import { getCriteria, getDocumentSource } from './criteria';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -126,9 +126,9 @@ app.post('/api/listings/:id/document', async (c) => {
   if (!row) return c.json({ error: 'not found' }, 404);
   if (row.tailored_doc && c.req.query('redo') !== '1') return c.json(JSON.parse(row.tailored_doc));
 
-  const source = c.env.CRITERIA_JSON ? getCriteria(c.env).document : undefined;
+  const source = getDocumentSource(c.env);
   if (!source?.name || !source.experience?.length) {
-    return c.json({ error: 'Add a "document" section to the CRITERIA_JSON secret first' }, 400);
+    return c.json({ error: 'Set the DOCUMENT_JSON secret first (pnpm run document:upload)' }, 400);
   }
   try {
     const doc = await tailorDocument(c.env, source, row);
