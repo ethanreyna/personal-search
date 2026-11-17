@@ -13,7 +13,8 @@ and triage the results.
 - Cron Trigger for the periodic sync
 - React + Vite for the dashboard, served as static assets from the same Worker
 - pnpm workspaces (root + `client`)
-- Basic auth in front of every route (this isn't meant to be public)
+- Accounts with a sign-in page; creating one needs an invite code. Each account
+  has its own criteria, profile document, listings and outputs.
 
 ## Layout
 
@@ -21,8 +22,7 @@ and triage the results.
 worker/src/         API + scheduled sync (Hono)
 worker/src/sources/  one module per data source
 worker/migrations/   D1 schema
-worker/criteria.json Private, gitignored — your actual target criteria.
-                      Copy worker/criteria.example.json to start one.
+worker/criteria.example.json  Default criteria until an account saves its own.
 client/              React/Vite dashboard
 ```
 
@@ -34,13 +34,10 @@ client/              React/Vite dashboard
    ```
    pnpm install
    ```
-2. Copy `worker/criteria.example.json` to `worker/criteria.json` and fill
-   in your own titles/skills/locations. This file is gitignored and never
-   committed. The Worker reads it at runtime from the `CRITERIA_JSON`
-   secret (upload it with `pnpm run criteria:upload`, and re-run that
-   whenever you edit the file). For local dev, add it to `.dev.vars` as a
-   single line: `CRITERIA_JSON='{"titles":[...],...}'`. Without it, the
-   example criteria are used.
+2. Criteria and the profile document are saved per account from the
+   dashboard's Profile page (upload a PDF to fill the fields, then review
+   and save). Until an account saves criteria, the example file is used for
+   scoring.
 3. Log in and create the D1 database:
    ```
    pnpm exec wrangler login
@@ -54,7 +51,7 @@ client/              React/Vite dashboard
 5. Set secrets (only add the ones for sources you want to use — sources
    without a key are simply skipped):
    ```
-   pnpm exec wrangler secret put ACCESS_PASSWORD
+   pnpm exec wrangler secret put INVITE_CODE        # required to create an account
    pnpm exec wrangler secret put APIFY_TOKEN        # on-demand keyword search
    pnpm exec wrangler secret put HUNTER_API_KEY     # contact lookup
    pnpm exec wrangler secret put ANTHROPIC_API_KEY  # message drafts
@@ -81,7 +78,7 @@ every push to `main` deploys (Worker → Settings → Build):
 - The build's API token needs **D1: Edit** in addition to the defaults,
   since the deploy applies migrations.
 
-Runtime secrets (`CRITERIA_JSON`, API keys) live on the Worker and are not
+Runtime secrets (invite code, API keys) live on the Worker and are not
 part of the build.
 
 ## On-demand search and outreach
@@ -104,17 +101,23 @@ automatically after the criteria change.
 Listings that include the poster's profile get a "Find email" button
 (Hunter email-finder; a credit is only spent when an address is found,
 and the confidence score is shown next to it). "Draft email" writes a
-short message from the `outreach` section of `worker/criteria.json`; the
+short message from the background notes saved on the Profile page; the
 draft is editable and saved per listing. Nothing is ever sent
 automatically.
 
-"Tailored PDF" rewrites the profile document in `worker/document.json`
-(private, gitignored; copy `worker/document.example.json` to start) to
-emphasize what a listing asks for, using only facts already in the file.
-Names, contact details, titles and dates are copied as-is. The PDF is laid out
-in the browser and downloaded with the `fileName` from that file. Upload it
-with `pnpm run document:upload` (secrets are capped at about 5 kB, so keep
-it concise); `criteria:upload` works the same way for the criteria file.
+"Tailored PDF" rewrites the account's profile document to emphasize what a
+listing asks for, using only facts already in it. Names, contact details,
+titles and dates are copied as-is. The PDF is laid out in the browser and
+downloaded with the file name from the profile, followed by the
+organization. "Write letter" writes a short, plain letter for the listing
+from the same facts; it can be edited before downloading.
+
+The Personalize page does the same for any title and description pasted in
+by hand, and keeps earlier ones to download again.
+
+Sign-in uses a session cookie. Passwords are hashed with PBKDF2. Accounts
+can only see their own rows. The scheduled sync runs once per account that
+has saved criteria.
 
 Schema changes live in `worker/migrations/` and are applied with
 `pnpm run db:migrate:local` / `pnpm run db:migrate:remote`.

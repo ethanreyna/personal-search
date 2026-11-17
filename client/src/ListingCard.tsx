@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import type { Listing, TailoredDocument } from './types';
-import { downloadDocument, downloadLetter, type LetterContent } from './pdf';
+import type { Listing } from './types';
+import { downloadDocument, type LetterContent } from './pdf';
+import { getDocument, getLetter, saveLetter as putLetter } from './api';
+import LetterPanel from './LetterPanel';
 
 interface Props {
   listing: Listing;
@@ -11,12 +13,13 @@ const enc = encodeURIComponent;
 
 export default function ListingCard({ listing: initial, onStatus }: Props) {
   const [l, setL] = useState(initial);
-  const [busy, setBusy] = useState<'' | 'contact' | 'draft' | 'save' | 'doc' | 'letter' | 'letter-pdf'>('');
+  const [busy, setBusy] = useState<'' | 'contact' | 'draft' | 'save' | 'doc' | 'letter'>('');
   const [letter, setLetter] = useState<LetterContent | null>(null);
   const [showLetter, setShowLetter] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [showDraft, setShowDraft] = useState(!!initial.draft_body);
   const [copied, setCopied] = useState(false);
+  const base = `/api/listings/${enc(initial.id)}`;
 
   const findEmail = async () => {
     setBusy('contact');
@@ -55,10 +58,7 @@ export default function ListingCard({ listing: initial, onStatus }: Props) {
     setBusy('doc');
     setNote(null);
     try {
-      const res = await fetch(`/api/listings/${enc(l.id)}/document${redo ? '?redo=1' : ''}`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `Failed (${res.status})`);
-      const doc = data as TailoredDocument;
+      const doc = await getDocument(base, redo);
       await downloadDocument(doc, l.company);
       setL({ ...l, has_document: 1 });
       if (doc.changes) setNote(doc.changes);
@@ -74,48 +74,13 @@ export default function ListingCard({ listing: initial, onStatus }: Props) {
     setBusy('letter');
     setNote(null);
     try {
-      const res = await fetch(`/api/listings/${enc(l.id)}/letter${redo ? '?redo=1' : ''}`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `Failed (${res.status})`);
-      setLetter(data as LetterContent);
+      setLetter(await getLetter(base, redo));
       setShowLetter(true);
       setL({ ...l, has_letter: 1 });
     } catch (err) {
       setNote(err instanceof Error ? err.message : 'Letter failed');
     } finally {
       setBusy('');
-    }
-  };
-
-  const saveLetter = async () => {
-    if (!letter) return;
-    await fetch(`/api/listings/${enc(l.id)}/letter`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body: letter.body }),
-    });
-  };
-
-  const letterPdf = async () => {
-    if (!letter) return;
-    setBusy('letter-pdf');
-    try {
-      await saveLetter();
-      await downloadLetter(letter, l.company);
-    } catch (err) {
-      setNote(err instanceof Error ? err.message : 'PDF failed');
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const copyLetter = async () => {
-    try {
-      await navigator.clipboard.writeText(letter?.body ?? '');
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setNote('Clipboard not available');
     }
   };
 
@@ -233,24 +198,15 @@ export default function ListingCard({ listing: initial, onStatus }: Props) {
       {note && <p className="note">{note}</p>}
 
       {showLetter && letter && (
-        <div className="draft">
-          <textarea
-            rows={16}
-            value={letter.body}
-            onChange={(e) => setLetter({ ...letter, body: e.target.value })}
-            onBlur={saveLetter}
-          />
-          <div className="actions">
-            <button onClick={letterPdf} disabled={!!busy}>
-              {busy === 'letter-pdf' ? 'Building…' : 'Download letter PDF'}
-            </button>
-            <button onClick={copyLetter}>{copied ? 'Copied' : 'Copy'}</button>
-            <button onClick={() => openLetter(true)} disabled={!!busy}>
-              {busy === 'letter' ? 'Writing…' : 'Redo letter'}
-            </button>
-            <button onClick={() => setShowLetter(false)}>Hide</button>
-          </div>
-        </div>
+        <LetterPanel
+          letter={letter}
+          organization={l.company}
+          onChange={setLetter}
+          onSave={() => putLetter(base, letter.body)}
+          onRedo={() => openLetter(true)}
+          onHide={() => setShowLetter(false)}
+          redoing={busy === 'letter'}
+        />
       )}
 
       {showDraft && l.draft_body !== null && (

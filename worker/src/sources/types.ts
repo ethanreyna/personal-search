@@ -26,7 +26,7 @@ export interface OutreachProfile {
   links?: string[];
 }
 
-/** Source for the tailored PDF: the private worker/document.json, via the DOCUMENT_JSON secret. */
+/** Source for the tailored PDF, saved per account from the Profile page. */
 export interface ProfileDocument {
   /** Download name, e.g. "Jane Doe.pdf". Defaults to "<name>.pdf". The organization is appended. */
   fileName?: string;
@@ -66,7 +66,10 @@ export interface SearchParams {
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
-  ACCESS_PASSWORD: string;
+  /** Old shared password; only used once for the original account's first sign-in. */
+  ACCESS_PASSWORD?: string;
+  /** Code required to create an account. Sign-up is closed when unset. */
+  INVITE_CODE?: string;
   ADZUNA_APP_ID?: string;
   ADZUNA_APP_KEY?: string;
   RAPIDAPI_KEY?: string;
@@ -75,8 +78,4 @@ export interface Env {
   APIFY_ACTOR?: string;
   HUNTER_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
-  /** Contents of the private worker/criteria.json. */
-  CRITERIA_JSON?: string;
-  /** Contents of the private worker/document.json. */
-  DOCUMENT_JSON?: string;
 }

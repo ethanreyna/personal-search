@@ -187,7 +187,8 @@ export default function App() {
   const runSync = async () => {
     setSyncing(true);
     try {
-      await fetch('/api/sync', { method: 'POST' });
+      const res = await fetch('/api/sync', { method: 'POST' });
+      if (!res.ok) setError((await res.json().catch(() => ({}))).error || `Sync failed (${res.status})`);
       await load();
     } finally {
       setSyncing(false);
@@ -197,9 +198,9 @@ export default function App() {
   const update = <K extends keyof SearchForm>(k: K, v: SearchForm[K]) => setForm((f) => ({ ...f, [k]: v }));
 
   return (
-    <div className="wrap">
+    <div>
       <header>
-        <h1>Dashboard</h1>
+        <h1>Listings</h1>
         <button onClick={runSync} disabled={syncing}>
           {syncing ? 'Syncing…' : 'Run scheduled sync'}
         </button>

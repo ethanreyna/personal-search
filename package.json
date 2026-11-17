@@ -7,12 +7,10 @@
     "dev": "pnpm run build:client && wrangler dev",
     "build:client": "pnpm --filter client build",
     "deploy": "pnpm run build:client && wrangler d1 migrations apply personal-search-db --remote && wrangler deploy",
-    "criteria:upload": "node scripts/upload-secret.mjs worker/criteria.json CRITERIA_JSON",
-    "secrets": "echo 'Run: wrangler secret put ACCESS_PASSWORD | APIFY_TOKEN | HUNTER_API_KEY | ANTHROPIC_API_KEY | ADZUNA_APP_ID | ADZUNA_APP_KEY | RAPIDAPI_KEY'",
+    "secrets": "echo 'Run: wrangler secret put INVITE_CODE | APIFY_TOKEN | HUNTER_API_KEY | ANTHROPIC_API_KEY | ADZUNA_APP_ID | ADZUNA_APP_KEY | RAPIDAPI_KEY'",
     "typecheck": "tsc --noEmit -p .",
     "db:migrate:local": "wrangler d1 migrations apply personal-search-db --local",
-    "db:migrate:remote": "wrangler d1 migrations apply personal-search-db --remote",
-    "document:upload": "node scripts/upload-secret.mjs worker/document.json DOCUMENT_JSON"
+    "db:migrate:remote": "wrangler d1 migrations apply personal-search-db --remote"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",

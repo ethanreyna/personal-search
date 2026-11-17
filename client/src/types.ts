@@ -53,3 +53,32 @@ export interface TailoredDocument {
   experience: Array<{ company: string; title: string; dates: string; bullets: string[] }>;
   changes: string;
 }
+
+/** The account's saved profile document, the source for tailored PDFs and letters. */
+export interface ProfileDocument {
+  fileName?: string;
+  letterFileName?: string;
+  name: string;
+  contact: string[];
+  education: Array<{ school: string; detail: string; date: string }>;
+  skills: Array<{ label: string; items: string[] }>;
+  experience: Array<{ company: string; title: string; dates: string; bullets: string[] }>;
+  extraFacts?: string[];
+}
+
+export interface Criteria {
+  titles: string[];
+  mustHaveAnySkills: string[];
+  skills: string[];
+  locations: string[];
+  remoteOk: boolean;
+  excludeKeywords: string[];
+  targetYearsExperience: number;
+  outreach?: { name: string; background: string[]; links?: string[] };
+}
+
+export interface Me {
+  username: string;
+  hasDocument: boolean;
+  hasCriteria: boolean;
+}

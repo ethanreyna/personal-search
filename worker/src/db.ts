@@ -5,12 +5,12 @@ const isEnglish = (title: string, description: string | null | undefined) =>
   looksEnglish(normalizeText(`${title} ${description ?? ''}`)) ? 1 : 0;
 import { matchListing, matchVersion } from './match';
 
-function makeId(source: string, externalId: string): string {
-  return `${source}:${externalId}`;
+function makeId(userId: number, source: string, externalId: string): string {
+  return `${userId}:${source}:${externalId}`;
 }
 
-export async function upsertListing(db: D1Database, listing: RawListing, criteria: Criteria): Promise<string> {
-  const id = makeId(listing.source, listing.externalId);
+export async function upsertListing(db: D1Database, userId: number, listing: RawListing, criteria: Criteria): Promise<string> {
+  const id = makeId(userId, listing.source, listing.externalId);
   const now = new Date().toISOString();
   const minYears = minYearsRequired(listing.description);
   const match = matchListing(listing, criteria, minYears);
@@ -20,11 +20,11 @@ export async function upsertListing(db: D1Database, listing: RawListing, criteri
   await db
     .prepare(
       `INSERT INTO listings
-        (id, source, external_id, title, company, location, remote, url, description, salary_min, salary_max, posted_at, fetched_at, score, status,
+        (id, user_id, source, external_id, title, company, location, remote, url, description, salary_min, salary_max, posted_at, fetched_at, score, status,
          applicants, poster_name, poster_title, poster_url, company_website, min_years, years_checked,
          match_notes, score_version, desc_norm, norm_checked, english)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'new', ?15, ?16, ?17, ?18, ?19, ?20, 1, ?21, ?22, ?23, 1, ?24)
-       ON CONFLICT(source, external_id) DO UPDATE SET
+       VALUES (?1, ?25, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'new', ?15, ?16, ?17, ?18, ?19, ?20, 1, ?21, ?22, ?23, 1, ?24)
+       ON CONFLICT(user_id, source, external_id) DO UPDATE SET
          title = excluded.title,
          company = excluded.company,
          location = excluded.location,
@@ -73,14 +73,21 @@ export async function upsertListing(db: D1Database, listing: RawListing, criteri
       match.notes,
       matchVersion(criteria),
       normalizeText(listing.description),
-      isEnglish(listing.title, listing.description)
+      isEnglish(listing.title, listing.description),
+      userId
     )
     .run();
   return id;
 }
 
 /** Recomputes match % for rows scored with older criteria or an older formula. */
-export async function rescoreListings(db: D1Database, criteria: Criteria, batchSize = 100, maxBatches = 2): Promise<number> {
+export async function rescoreListings(
+  db: D1Database,
+  userId: number,
+  criteria: Criteria,
+  batchSize = 100,
+  maxBatches = 2
+): Promise<number> {
   const version = matchVersion(criteria);
   const stmt = db.prepare('UPDATE listings SET score = ?, match_notes = ?, score_version = ? WHERE id = ?');
   let total = 0;
@@ -88,9 +95,9 @@ export async function rescoreListings(db: D1Database, criteria: Criteria, batchS
     const { results } = await db
       .prepare(
         `SELECT id, source, external_id, title, location, remote, url, description, min_years
-         FROM listings WHERE years_checked = 1 AND (score_version IS NULL OR score_version != ?) LIMIT ?`
+         FROM listings WHERE user_id = ? AND years_checked = 1 AND (score_version IS NULL OR score_version != ?) LIMIT ?`
       )
-      .bind(version, batchSize)
+      .bind(userId, version, batchSize)
       .all<{ id: string; source: string; external_id: string; title: string; location: string | null;
              remote: number; url: string; description: string | null; min_years: number | null }>();
     if (!results.length) break;
@@ -150,7 +157,8 @@ export async function pruneStale(db: D1Database, days = 30, batchSize = 1000, ma
       .prepare(
         `DELETE FROM listings WHERE id IN (
            SELECT id FROM listings
-           WHERE status = 'new' AND contact_email IS NULL AND draft_body IS NULL AND fetched_at < ?
+           WHERE status = 'new' AND contact_email IS NULL AND draft_body IS NULL
+             AND tailored_doc IS NULL AND letter_body IS NULL AND fetched_at < ?
            LIMIT ?)`
       )
       .bind(cutoff, batchSize)
@@ -206,15 +214,15 @@ const SORTS: Record<string, string> = {
   company: "(company IS NULL OR company = ''), lower(company) ASC, score DESC",
 };
 
-export async function getListings(db: D1Database, opts: ListingFilters) {
+export async function getListings(db: D1Database, userId: number, opts: ListingFilters) {
   const limit = opts.limit ?? 100;
   // Explicit columns: leaves out the normalized text and the stored document body.
   let query = `SELECT id, source, external_id, title, company, location, remote, url, description, salary_min,
       salary_max, posted_at, fetched_at, score, status, applicants, poster_name, poster_title, poster_url,
       company_website, contact_email, contact_status, contact_score, min_years, match_notes, draft_subject,
       draft_body, (tailored_doc IS NOT NULL) AS has_document, (letter_body IS NOT NULL) AS has_letter
-    FROM listings WHERE 1=1`;
-  const binds: unknown[] = [];
+    FROM listings WHERE user_id = ?`;
+  const binds: unknown[] = [userId];
 
   if (opts.status) {
     query += ' AND status = ?';
@@ -262,36 +270,38 @@ export async function getListings(db: D1Database, opts: ListingFilters) {
   return results;
 }
 
-export async function getListing(db: D1Database, id: string) {
-  return db.prepare('SELECT * FROM listings WHERE id = ?').bind(id).first<Record<string, any>>();
+export async function getListing(db: D1Database, userId: number, id: string) {
+  return db.prepare('SELECT * FROM listings WHERE id = ? AND user_id = ?').bind(id, userId).first<Record<string, any>>();
 }
 
-export async function setListingStatus(db: D1Database, id: string, status: string): Promise<void> {
-  await db.prepare('UPDATE listings SET status = ? WHERE id = ?').bind(status, id).run();
+export async function setListingStatus(db: D1Database, userId: number, id: string, status: string): Promise<void> {
+  await db.prepare('UPDATE listings SET status = ? WHERE id = ? AND user_id = ?').bind(status, id, userId).run();
 }
 
 export async function setContact(
   db: D1Database,
+  userId: number,
   id: string,
   email: string | null,
   status: string,
   score: number | null
 ): Promise<void> {
   await db
-    .prepare('UPDATE listings SET contact_email = ?, contact_status = ?, contact_score = ? WHERE id = ?')
-    .bind(email, status, score, id)
+    .prepare('UPDATE listings SET contact_email = ?, contact_status = ?, contact_score = ? WHERE id = ? AND user_id = ?')
+    .bind(email, status, score, id, userId)
     .run();
 }
 
-export async function setDraft(db: D1Database, id: string, subject: string, body: string): Promise<void> {
+export async function setDraft(db: D1Database, userId: number, id: string, subject: string, body: string): Promise<void> {
   await db
-    .prepare('UPDATE listings SET draft_subject = ?, draft_body = ? WHERE id = ?')
-    .bind(subject, body, id)
+    .prepare('UPDATE listings SET draft_subject = ?, draft_body = ? WHERE id = ? AND user_id = ?')
+    .bind(subject, body, id, userId)
     .run();
 }
 
 export async function recordSyncRun(
   db: D1Database,
+  userId: number,
   startedAt: string,
   finishedAt: string,
   ok: string[],
@@ -300,16 +310,63 @@ export async function recordSyncRun(
 ): Promise<void> {
   await db
     .prepare(
-      'INSERT INTO sync_runs (started_at, finished_at, sources_ok, sources_failed, new_count) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO sync_runs (user_id, started_at, finished_at, sources_ok, sources_failed, new_count) VALUES (?, ?, ?, ?, ?, ?)'
     )
-    .bind(startedAt, finishedAt, ok.join(','), failed.join(','), newCount)
+    .bind(userId, startedAt, finishedAt, ok.join(','), failed.join(','), newCount)
     .run();
 }
 
-export async function setTailoredDocument(db: D1Database, id: string, doc: string) {
-  await db.prepare('UPDATE listings SET tailored_doc = ? WHERE id = ?').bind(doc, id).run();
+/** Tables that hold a generated document and letter per row: listings, and hand-entered personalizations. */
+export type OutputTable = 'listings' | 'personalizations';
+
+export async function setTailoredDocument(db: D1Database, table: OutputTable, userId: number, id: string | number, doc: string) {
+  await db.prepare(`UPDATE ${table} SET tailored_doc = ? WHERE id = ? AND user_id = ?`).bind(doc, id, userId).run();
 }
 
-export async function setLetter(db: D1Database, id: string, body: string) {
-  await db.prepare('UPDATE listings SET letter_body = ? WHERE id = ?').bind(body, id).run();
+export async function setLetter(db: D1Database, table: OutputTable, userId: number, id: string | number, body: string) {
+  await db.prepare(`UPDATE ${table} SET letter_body = ? WHERE id = ? AND user_id = ?`).bind(body, id, userId).run();
+}
+
+export interface Personalization {
+  id: number;
+  title: string;
+  company: string | null;
+  description: string;
+  tailored_doc: string | null;
+  letter_body: string | null;
+  created_at: string;
+}
+
+export async function listPersonalizations(db: D1Database, userId: number) {
+  const { results } = await db
+    .prepare(
+      `SELECT id, title, company, created_at, (tailored_doc IS NOT NULL) AS has_document, (letter_body IS NOT NULL) AS has_letter
+       FROM personalizations WHERE user_id = ? ORDER BY created_at DESC LIMIT 100`
+    )
+    .bind(userId)
+    .all();
+  return results;
+}
+
+export async function getPersonalization(db: D1Database, userId: number, id: number) {
+  return db
+    .prepare('SELECT * FROM personalizations WHERE id = ? AND user_id = ?')
+    .bind(id, userId)
+    .first<Personalization>();
+}
+
+export async function createPersonalization(
+  db: D1Database,
+  userId: number,
+  p: { title: string; company: string | null; description: string }
+): Promise<number> {
+  const res = await db
+    .prepare('INSERT INTO personalizations (user_id, title, company, description, created_at) VALUES (?, ?, ?, ?, ?)')
+    .bind(userId, p.title, p.company, p.description, new Date().toISOString())
+    .run();
+  return Number(res.meta.last_row_id);
+}
+
+export async function deletePersonalization(db: D1Database, userId: number, id: number) {
+  await db.prepare('DELETE FROM personalizations WHERE id = ? AND user_id = ?').bind(id, userId).run();
 }
