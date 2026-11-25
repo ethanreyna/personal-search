@@ -14,7 +14,8 @@ run_worker_first = true
 not_found_handling = "single-page-application"
 
 [triggers]
-crons = ["0 */4 * * *"]
+# Hourly; each run syncs the one account most overdue (every 4 hours per account).
+crons = ["0 * * * *"]
 
 [[d1_databases]]
 binding = "DB"

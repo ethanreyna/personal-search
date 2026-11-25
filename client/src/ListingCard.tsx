@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Listing } from './types';
+import type { Flag, Listing } from './types';
 import { downloadDocument, type LetterContent } from './pdf';
 import { getDocument, getLetter, saveLetter as putLetter } from './api';
 import LetterPanel from './LetterPanel';
@@ -11,15 +11,52 @@ interface Props {
 
 const enc = encodeURIComponent;
 
+const STATUS_LABEL: Record<string, string> = { new: 'Not reviewed', saved: 'Saved', applied: 'Applied', dismissed: 'Dismissed' };
+const day = (s: string | null) => (s ? new Date(s).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '');
+
+function parseFlags(raw: string | null): Flag[] {
+  try {
+    return raw ? (JSON.parse(raw) as Flag[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function money(l: Listing): string | null {
+  const k = (n: number) => `${Math.round(n / 1000)}k`;
+  if (l.salary_min && l.salary_max && l.salary_min !== l.salary_max) return `${k(l.salary_min)}–${k(l.salary_max)}`;
+  const one = l.salary_min ?? l.salary_max;
+  return one ? k(one) : null;
+}
+
 export default function ListingCard({ listing: initial, onStatus }: Props) {
   const [l, setL] = useState(initial);
-  const [busy, setBusy] = useState<'' | 'contact' | 'draft' | 'save' | 'doc' | 'letter'>('');
+  const [busy, setBusy] = useState<'' | 'contact' | 'draft' | 'save' | 'doc' | 'letter' | 'check'>('');
   const [letter, setLetter] = useState<LetterContent | null>(null);
   const [showLetter, setShowLetter] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [showDraft, setShowDraft] = useState(!!initial.draft_body);
   const [copied, setCopied] = useState(false);
   const base = `/api/listings/${enc(initial.id)}`;
+
+  const checkOpen = async () => {
+    setBusy('check');
+    setNote(null);
+    try {
+      const res = await fetch(`${base}/check`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Failed (${res.status})`);
+      setL({ ...l, open_status: data.open_status, checked_at: new Date().toISOString() });
+      if (!data.checked) setNote("Couldn't tell from the page (it may block automated checks).");
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'Check failed');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const flags = parseFlags(l.flags);
+  const pay = money(l);
 
   const findEmail = async () => {
     setBusy('contact');
@@ -122,6 +159,55 @@ export default function ListingCard({ listing: initial, onStatus }: Props) {
         </span>
       </div>
       {l.match_notes && <div className="match-notes">{l.match_notes}</div>}
+      <div className="facts">
+        <span>First seen {day(l.first_seen ?? l.fetched_at)}</span>
+        <span>
+          Posting{' '}
+          {l.open_status === 'open' ? (
+            <span className="tag good" title={l.checked_at ? `Checked ${day(l.checked_at)}` : undefined}>✓ Confirmed open</span>
+          ) : l.open_status === 'closed' ? (
+            <span className="tag bad">Closed</span>
+          ) : (
+            <span className="tag muted-tag">Not checked</span>
+          )}
+          {l.open_status !== 'closed' && l.source !== 'linkedin' && (
+            <button className="mini" onClick={checkOpen} disabled={!!busy}>
+              {busy === 'check' ? 'Checking…' : 'Check'}
+            </button>
+          )}
+        </span>
+        <span>
+          Found on {l.source}
+          {l.also_on && <span className="muted"> (also {l.also_on.split(',').join(', ')})</span>}
+        </span>
+        <span>You: {STATUS_LABEL[l.status] ?? l.status}</span>
+        {l.closes_at && <span>Closes {day(l.closes_at)}</span>}
+      </div>
+      <div className="why">
+        <span className="muted">{pay ? `${pay} · ` : 'Pay not listed · '}</span>
+        {l.why && (
+          <>
+            <span className="muted">Why it is here: </span>
+            {l.why}
+          </>
+        )}
+      </div>
+      {l.to_check && (
+        <div className="why">
+          <span className="muted">To check: </span>
+          {l.to_check}
+        </div>
+      )}
+      {flags.length > 0 && (
+        <div className="chips">
+          {flags.map((f) => (
+            <span key={f.code} className={`chip ${f.kind}`}>
+              {f.kind === 'good' ? '✓ ' : f.kind === 'warn' ? '! ' : f.code === 'title_close' ? '≈ ' : '? '}
+              {f.label}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="meta">
         {l.company && <span>{l.company}</span>}
         {l.location && <span>{l.location}</span>}

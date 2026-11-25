@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
-import type { Criteria, ProfileDocument } from './types';
+import type { Criteria, ProfileDocument, SourceInfo } from './types';
 
 // Forms keep lists as plain text (one per line, or comma separated) and convert on save.
 const lines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean);
@@ -28,6 +28,9 @@ interface CriteriaForm {
   outreachName: string;
   background: string;
   links: string;
+  minSalary: string;
+  disabledSources: string[];
+  boards: string;
 }
 
 const EMPTY_DOC: DocForm = {
@@ -80,6 +83,9 @@ function toCriteriaForm(c: Criteria | null): CriteriaForm {
     outreachName: c?.outreach?.name ?? '',
     background: (c?.outreach?.background ?? []).join('\n'),
     links: (c?.outreach?.links ?? []).join('\n'),
+    minSalary: c?.minSalary ? String(c.minSalary) : '',
+    disabledSources: c?.disabledSources ?? [],
+    boards: (c?.boards ?? []).join('\n'),
   };
 }
 
@@ -93,6 +99,9 @@ function fromCriteriaForm(f: CriteriaForm): Criteria {
     excludeKeywords: commas(f.excludeKeywords),
     targetYearsExperience: Number(f.targetYearsExperience) || 0,
     outreach: { name: f.outreachName, background: lines(f.background), links: lines(f.links) },
+    minSalary: Number(f.minSalary) || undefined,
+    disabledSources: f.disabledSources,
+    boards: lines(f.boards),
   };
 }
 
@@ -112,6 +121,11 @@ export default function Profile({ onSaved }: { onSaved: () => void }) {
   const [busy, setBusy] = useState<'' | 'import' | 'doc' | 'crit' | 'pw'>('');
   const [msg, setMsg] = useState<{ where: string; text: string; error?: boolean } | null>(null);
   const [pw, setPw] = useState({ current: '', next: '' });
+  const [sources, setSources] = useState<SourceInfo[]>([]);
+
+  useEffect(() => {
+    api<SourceInfo[]>('/api/sources').then(setSources, () => undefined);
+  }, []);
 
   useEffect(() => {
     api<{ document: ProfileDocument | null; criteria: Criteria | null }>('/api/profile')
@@ -320,6 +334,50 @@ export default function Profile({ onSaved }: { onSaved: () => void }) {
         <label className="toggle">
           <input type="checkbox" checked={crit.remoteOk} onChange={(e) => setCrit({ ...crit, remoteOk: e.target.checked })} />
           Remote is fine
+        </label>
+        <label className="field">
+          Pay target (yearly, used to flag pay above or below it)
+          <input
+            type="number"
+            min={0}
+            step={5000}
+            placeholder="e.g. 110000"
+            value={crit.minSalary}
+            onChange={(e) => setCrit({ ...crit, minSalary: e.target.value })}
+          />
+        </label>
+
+        <h3>Sources</h3>
+        <div className="source-grid">
+          {sources.map((s) => (
+            <label key={s.name} className="toggle" title={s.note}>
+              <input
+                type="checkbox"
+                disabled={!s.configured}
+                checked={s.configured && !crit.disabledSources.includes(s.name)}
+                onChange={(e) =>
+                  setCrit({
+                    ...crit,
+                    disabledSources: e.target.checked
+                      ? crit.disabledSources.filter((n) => n !== s.name)
+                      : [...crit.disabledSources, s.name],
+                  })
+                }
+              />
+              {s.label}
+              {!s.configured ? ' (no key set)' : s.note ? ` · ${s.note}` : ''}
+            </label>
+          ))}
+        </div>
+        <label className="field">
+          Employer boards to watch, one per line as greenhouse:token, lever:company or ashby:board. The name is the
+          one in the board's web address: boards.greenhouse.io/stripe is greenhouse:stripe.
+          <textarea
+            rows={4}
+            placeholder={'greenhouse:stripe\nlever:palantir\nashby:ramp'}
+            value={crit.boards}
+            onChange={(e) => setCrit({ ...crit, boards: e.target.value })}
+          />
         </label>
 
         <h3>For emails and letters</h3>

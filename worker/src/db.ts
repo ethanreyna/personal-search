@@ -4,83 +4,83 @@ import { looksEnglish, minYearsRequired, normalizeText } from './experience';
 const isEnglish = (title: string, description: string | null | undefined) =>
   looksEnglish(normalizeText(`${title} ${description ?? ''}`)) ? 1 : 0;
 import { matchListing, matchVersion } from './match';
+import { dupeKey } from './signals';
 
 function makeId(userId: number, source: string, externalId: string): string {
   return `${userId}:${source}:${externalId}`;
 }
 
+// Columns written on every fetch, in bind order.
+const UPSERT_COLUMNS = [
+  'id', 'user_id', 'source', 'external_id', 'title', 'company', 'location', 'remote', 'url', 'description',
+  'salary_min', 'salary_max', 'posted_at', 'fetched_at', 'first_seen', 'score', 'applicants', 'poster_name',
+  'poster_title', 'poster_url', 'company_website', 'min_years', 'years_checked', 'match_notes', 'score_version',
+  'desc_norm', 'norm_checked', 'english', 'flags', 'tier', 'why', 'to_check', 'dupe_key', 'open_status',
+  'checked_at', 'closes_at',
+] as const;
+
+// Kept from the stored row when the new fetch doesn't have them.
+const KEEP_IF_NULL = new Set(['poster_name', 'poster_title', 'poster_url', 'company_website', 'open_status', 'checked_at', 'closes_at']);
+// Never overwritten after the first insert.
+const INSERT_ONLY = new Set(['id', 'user_id', 'source', 'external_id', 'first_seen']);
+
+const UPSERT_SQL = `INSERT INTO listings (${UPSERT_COLUMNS.join(', ')}) VALUES (${UPSERT_COLUMNS.map(() => '?').join(', ')})
+  ON CONFLICT(user_id, source, external_id) DO UPDATE SET ${UPSERT_COLUMNS.filter((c) => !INSERT_ONLY.has(c))
+    .map((c) => (KEEP_IF_NULL.has(c) ? `${c} = COALESCE(excluded.${c}, listings.${c})` : `${c} = excluded.${c}`))
+    .join(', ')}`;
+
 export async function upsertListing(db: D1Database, userId: number, listing: RawListing, criteria: Criteria): Promise<string> {
   const id = makeId(userId, listing.source, listing.externalId);
   const now = new Date().toISOString();
   const minYears = minYearsRequired(listing.description);
-  const match = matchListing(listing, criteria, minYears);
+  const m = matchListing(listing, criteria, minYears);
+  const closed = listing.closesAt && listing.closesAt < now;
 
-  // Contact lookups, drafts and status are intentionally left out of the
-  // conflict update so re-fetching a listing never wipes them.
-  await db
-    .prepare(
-      `INSERT INTO listings
-        (id, user_id, source, external_id, title, company, location, remote, url, description, salary_min, salary_max, posted_at, fetched_at, score, status,
-         applicants, poster_name, poster_title, poster_url, company_website, min_years, years_checked,
-         match_notes, score_version, desc_norm, norm_checked, english)
-       VALUES (?1, ?25, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'new', ?15, ?16, ?17, ?18, ?19, ?20, 1, ?21, ?22, ?23, 1, ?24)
-       ON CONFLICT(user_id, source, external_id) DO UPDATE SET
-         title = excluded.title,
-         company = excluded.company,
-         location = excluded.location,
-         remote = excluded.remote,
-         url = excluded.url,
-         description = excluded.description,
-         salary_min = excluded.salary_min,
-         salary_max = excluded.salary_max,
-         posted_at = excluded.posted_at,
-         fetched_at = excluded.fetched_at,
-         score = excluded.score,
-         applicants = excluded.applicants,
-         poster_name = COALESCE(excluded.poster_name, listings.poster_name),
-         poster_title = COALESCE(excluded.poster_title, listings.poster_title),
-         poster_url = COALESCE(excluded.poster_url, listings.poster_url),
-         company_website = COALESCE(excluded.company_website, listings.company_website),
-         min_years = excluded.min_years,
-         years_checked = 1,
-         match_notes = excluded.match_notes,
-         score_version = excluded.score_version,
-         desc_norm = excluded.desc_norm,
-         norm_checked = 1,
-         english = excluded.english`
-    )
-    .bind(
-      id,
-      listing.source,
-      listing.externalId,
-      listing.title,
-      listing.company ?? null,
-      listing.location ?? null,
-      listing.remote ? 1 : 0,
-      listing.url,
-      listing.description ?? null,
-      listing.salaryMin ?? null,
-      listing.salaryMax ?? null,
-      listing.postedAt ?? null,
-      now,
-      match.score,
-      listing.applicants ?? null,
-      listing.posterName ?? null,
-      listing.posterTitle ?? null,
-      listing.posterUrl ?? null,
-      listing.companyWebsite ?? null,
-      minYears,
-      match.notes,
-      matchVersion(criteria),
-      normalizeText(listing.description),
-      isEnglish(listing.title, listing.description),
-      userId
-    )
-    .run();
+  // Contact lookups, drafts, outputs and status aren't in the column list,
+  // so re-fetching a listing never wipes them.
+  const values: Record<(typeof UPSERT_COLUMNS)[number], unknown> = {
+    id,
+    user_id: userId,
+    source: listing.source,
+    external_id: listing.externalId,
+    title: listing.title,
+    company: listing.company ?? null,
+    location: listing.location ?? null,
+    remote: listing.remote ? 1 : 0,
+    url: listing.url,
+    description: listing.description ?? null,
+    salary_min: listing.salaryMin ?? m.parsedPay?.min ?? null,
+    salary_max: listing.salaryMax ?? m.parsedPay?.max ?? null,
+    posted_at: listing.postedAt ?? null,
+    fetched_at: now,
+    first_seen: now,
+    score: m.score,
+    applicants: listing.applicants ?? null,
+    poster_name: listing.posterName ?? null,
+    poster_title: listing.posterTitle ?? null,
+    poster_url: listing.posterUrl ?? null,
+    company_website: listing.companyWebsite ?? null,
+    min_years: minYears,
+    years_checked: 1,
+    match_notes: m.notes,
+    score_version: matchVersion(criteria),
+    desc_norm: normalizeText(listing.description),
+    norm_checked: 1,
+    english: isEnglish(listing.title, listing.description),
+    flags: JSON.stringify(m.flags),
+    tier: m.tier,
+    why: m.why,
+    to_check: m.check,
+    dupe_key: dupeKey(listing.title, listing.company),
+    open_status: closed ? 'closed' : listing.openNow ? 'open' : null,
+    checked_at: closed || listing.openNow ? now : null,
+    closes_at: listing.closesAt ?? null,
+  };
+  await db.prepare(UPSERT_SQL).bind(...UPSERT_COLUMNS.map((c) => values[c])).run();
   return id;
 }
 
-/** Recomputes match % for rows scored with older criteria or an older formula. */
+/** Recomputes match %, flags and reasons for rows scored with older criteria or an older formula. */
 export async function rescoreListings(
   db: D1Database,
   userId: number,
@@ -89,33 +89,58 @@ export async function rescoreListings(
   maxBatches = 2
 ): Promise<number> {
   const version = matchVersion(criteria);
-  const stmt = db.prepare('UPDATE listings SET score = ?, match_notes = ?, score_version = ? WHERE id = ?');
+  const stmt = db.prepare(
+    `UPDATE listings SET score = ?, match_notes = ?, score_version = ?, flags = ?, tier = ?, why = ?, to_check = ?,
+       salary_min = coalesce(salary_min, ?), salary_max = coalesce(salary_max, ?),
+       dupe_key = coalesce(dupe_key, ?) WHERE id = ?`
+  );
   let total = 0;
   for (let i = 0; i < maxBatches; i++) {
     const { results } = await db
       .prepare(
-        `SELECT id, source, external_id, title, location, remote, url, description, min_years
+        `SELECT id, source, external_id, title, company, location, remote, url, description, min_years, salary_min, salary_max
          FROM listings WHERE user_id = ? AND years_checked = 1 AND (score_version IS NULL OR score_version != ?) LIMIT ?`
       )
       .bind(userId, version, batchSize)
-      .all<{ id: string; source: string; external_id: string; title: string; location: string | null;
-             remote: number; url: string; description: string | null; min_years: number | null }>();
+      .all<{ id: string; source: string; external_id: string; title: string; company: string | null; location: string | null;
+             remote: number; url: string; description: string | null; min_years: number | null;
+             salary_min: number | null; salary_max: number | null }>();
     if (!results.length) break;
     await db.batch(
       results.map((r) => {
         const m = matchListing(
-          { source: r.source, externalId: r.external_id, title: r.title, url: r.url,
-            location: r.location ?? undefined, remote: !!r.remote, description: r.description ?? undefined },
+          { source: r.source, externalId: r.external_id, title: r.title, url: r.url, company: r.company ?? undefined,
+            location: r.location ?? undefined, remote: !!r.remote, description: r.description ?? undefined,
+            salaryMin: r.salary_min ?? undefined, salaryMax: r.salary_max ?? undefined },
           criteria,
           r.min_years
         );
-        return stmt.bind(m.score, m.notes, version, r.id);
+        return stmt.bind(
+          m.score, m.notes, version, JSON.stringify(m.flags), m.tier, m.why, m.check,
+          m.parsedPay?.min ?? null, m.parsedPay?.max ?? null, dupeKey(r.title, r.company), r.id
+        );
       })
     );
     total += results.length;
     if (results.length < batchSize) break;
   }
+  if (total) await markDuplicates(db, userId);
   return total;
+}
+
+/** Points later copies of the same posting (same dupe_key) at the first one seen. */
+export async function markDuplicates(db: D1Database, userId: number): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE listings SET duplicate_of = (
+         SELECT o.id FROM listings o
+         WHERE o.user_id = listings.user_id AND o.dupe_key = listings.dupe_key
+           AND (o.first_seen < listings.first_seen OR (o.first_seen = listings.first_seen AND o.id < listings.id))
+         ORDER BY o.first_seen, o.id LIMIT 1)
+       WHERE user_id = ? AND dupe_key IS NOT NULL`
+    )
+    .bind(userId)
+    .run();
 }
 
 /**
@@ -200,6 +225,13 @@ export interface ListingFilters {
   excludeDescriptionWords?: string[];
   /** Hide listings detected as not English. Unchecked rows are kept. */
   englishOnly?: boolean;
+  /** Hide postings known to be closed. */
+  hideClosed?: boolean;
+  /** Only listings with pay stated. */
+  payListed?: boolean;
+  /** Include later copies of a posting already seen on another source. */
+  includeDuplicates?: boolean;
+  tier?: string;
   sort?: string;
 }
 
@@ -212,17 +244,28 @@ const SORTS: Record<string, string> = {
   years: '(min_years IS NULL), min_years ASC, score DESC',
   salary: '(salary_max IS NULL AND salary_min IS NULL), coalesce(salary_max, salary_min) DESC, score DESC',
   company: "(company IS NULL OR company = ''), lower(company) ASC, score DESC",
+  first_seen: 'first_seen DESC, score DESC',
 };
+
+// Explicit columns: leaves out the normalized text and the stored document body.
+export const LISTING_COLUMNS = `id, source, external_id, title, company, location, remote, url, description, salary_min,
+  salary_max, posted_at, fetched_at, first_seen, score, status, applicants, poster_name, poster_title, poster_url,
+  company_website, contact_email, contact_status, contact_score, min_years, match_notes, draft_subject,
+  draft_body, flags, tier, why, to_check, open_status, checked_at, closes_at,
+  (tailored_doc IS NOT NULL) AS has_document, (letter_body IS NOT NULL) AS has_letter,
+  (SELECT group_concat(DISTINCT d.source) FROM listings d WHERE d.duplicate_of = listings.id) AS also_on`;
 
 export async function getListings(db: D1Database, userId: number, opts: ListingFilters) {
   const limit = opts.limit ?? 100;
-  // Explicit columns: leaves out the normalized text and the stored document body.
-  let query = `SELECT id, source, external_id, title, company, location, remote, url, description, salary_min,
-      salary_max, posted_at, fetched_at, score, status, applicants, poster_name, poster_title, poster_url,
-      company_website, contact_email, contact_status, contact_score, min_years, match_notes, draft_subject,
-      draft_body, (tailored_doc IS NOT NULL) AS has_document, (letter_body IS NOT NULL) AS has_letter
-    FROM listings WHERE user_id = ?`;
+  let query = `SELECT ${LISTING_COLUMNS} FROM listings WHERE user_id = ?`;
   const binds: unknown[] = [userId];
+  if (!opts.includeDuplicates) query += ' AND duplicate_of IS NULL';
+  if (opts.hideClosed) query += " AND coalesce(open_status, '') != 'closed'";
+  if (opts.payListed) query += ' AND (salary_min IS NOT NULL OR salary_max IS NOT NULL)';
+  if (opts.tier) {
+    query += ' AND tier = ?';
+    binds.push(opts.tier);
+  }
 
   if (opts.status) {
     query += ' AND status = ?';
@@ -369,4 +412,80 @@ export async function createPersonalization(
 
 export async function deletePersonalization(db: D1Database, userId: number, id: number) {
   await db.prepare('DELETE FROM personalizations WHERE id = ? AND user_id = ?').bind(id, userId).run();
+}
+
+/** One week (or `days`) of listings first seen, in numbers plus the two lists the digest shows. */
+export async function getDigest(db: D1Database, userId: number, days = 7) {
+  const to = new Date();
+  const from = new Date(to.getTime() - days * 86400_000).toISOString();
+  const counts = await db
+    .prepare(
+      `SELECT count(*) AS found,
+         sum(duplicate_of IS NULL) AS unique_count,
+         sum(duplicate_of IS NULL AND tier IN ('top', 'second')) AS matching,
+         sum(duplicate_of IS NULL AND open_status = 'open') AS confirmed_open,
+         sum(duplicate_of IS NULL AND open_status = 'closed') AS closed
+       FROM listings WHERE user_id = ? AND first_seen >= ?`
+    )
+    .bind(userId, from)
+    .first<{ found: number; unique_count: number; matching: number; confirmed_open: number; closed: number }>();
+
+  const lastRun = await db
+    .prepare('SELECT finished_at, sources_ok, sources_failed FROM sync_runs WHERE user_id = ? ORDER BY id DESC LIMIT 1')
+    .bind(userId)
+    .first<{ finished_at: string; sources_ok: string; sources_failed: string }>();
+  const split = (s: string | null | undefined) => (s ? s.split(',').filter(Boolean) : []);
+
+  const list = async (tier: string, limit: number) =>
+    (
+      await db
+        .prepare(
+          `SELECT ${LISTING_COLUMNS} FROM listings
+           WHERE user_id = ? AND first_seen >= ? AND tier = ? AND duplicate_of IS NULL
+             AND status != 'dismissed' AND coalesce(open_status, '') != 'closed'
+           ORDER BY score DESC, first_seen DESC LIMIT ?`
+        )
+        .bind(userId, from, tier, limit)
+        .all()
+    ).results;
+
+  return {
+    from,
+    to: to.toISOString(),
+    stats: {
+      found: counts?.found ?? 0,
+      unique: counts?.unique_count ?? 0,
+      matching: counts?.matching ?? 0,
+      confirmedOpen: counts?.confirmed_open ?? 0,
+      closed: counts?.closed ?? 0,
+    },
+    lastRun: lastRun
+      ? { at: lastRun.finished_at, ok: split(lastRun.sources_ok), failed: split(lastRun.sources_failed) }
+      : null,
+    top: await list('top', 25),
+    second: await list('second', 40),
+  };
+}
+
+export async function setOpenStatus(db: D1Database, userId: number, id: string, status: string | null) {
+  await db
+    .prepare('UPDATE listings SET open_status = coalesce(?, open_status), checked_at = ? WHERE id = ? AND user_id = ?')
+    .bind(status, new Date().toISOString(), id, userId)
+    .run();
+}
+
+/** The account whose scheduled sync is most overdue, if any is due. */
+export async function nextAccountToSync(db: D1Database, everyHours = 4) {
+  const due = new Date(Date.now() - everyHours * 3600_000).toISOString();
+  return db
+    .prepare(
+      `SELECT id, criteria_json FROM users WHERE criteria_json IS NOT NULL AND (last_synced_at IS NULL OR last_synced_at < ?)
+       ORDER BY last_synced_at IS NOT NULL, last_synced_at LIMIT 1`
+    )
+    .bind(due)
+    .first<{ id: number; criteria_json: string }>();
+}
+
+export async function markSynced(db: D1Database, userId: number) {
+  await db.prepare('UPDATE users SET last_synced_at = ? WHERE id = ?').bind(new Date().toISOString(), userId).run();
 }

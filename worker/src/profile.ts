@@ -50,6 +50,9 @@ export function cleanCriteria(x: any): Criteria {
     remoteOk: x?.remoteOk !== false,
     excludeKeywords: texts(x?.excludeKeywords, 60, 30),
     targetYearsExperience: Number.isFinite(years) ? Math.max(0, Math.min(40, Math.round(years))) : 3,
+    ...(Number(x?.minSalary) > 0 ? { minSalary: Math.min(2_000_000, Math.round(Number(x.minSalary))) } : {}),
+    disabledSources: texts(x?.disabledSources, 30, 20),
+    boards: texts(x?.boards, 80, 20).map((b) => b.toLowerCase().replace(/\s+/g, '')),
     ...(outreachName || background.length ? { outreach: { name: outreachName, background, links } } : {}),
   };
 }

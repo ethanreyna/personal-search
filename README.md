@@ -58,6 +58,9 @@ client/              React/Vite dashboard
    pnpm exec wrangler secret put ADZUNA_APP_ID
    pnpm exec wrangler secret put ADZUNA_APP_KEY
    pnpm exec wrangler secret put RAPIDAPI_KEY
+   pnpm exec wrangler secret put JOOBLE_API_KEY     # free key: 100 requests a day
+   pnpm exec wrangler secret put FEDERAL_API_KEY    # federal listings API key
+   pnpm exec wrangler secret put FEDERAL_API_EMAIL  # the email that key was registered with
    ```
    For local dev, put the same keys in `.dev.vars` (gitignored).
 6. Run locally or deploy:
@@ -122,6 +125,28 @@ has saved criteria.
 Schema changes live in `worker/migrations/` and are applied with
 `pnpm run db:migrate:local` / `pnpm run db:migrate:remote`.
 
-The scheduled sync runs on the cron in `wrangler.toml` (every 4 hours by
-default). You can also trigger a sync manually from the dashboard, or by
+The cron in `wrangler.toml` runs hourly and syncs the one account most
+overdue (each account every 4 hours), which keeps every run under the
+outbound request limit. You can also trigger a sync manually from the dashboard, or by
 POSTing to `/api/sync`.
+
+## Digest, flags and open checks
+
+- **Digest** (default 7 days): how many postings were found, how many are
+  left after removing the same posting seen on several sources, how many
+  match, how many are confirmed open, and which sources failed on the last
+  sync. Below that, "Top new" (clear title match, pay listed, nothing
+  flagged) and "Worth a second look" (pay missing, a requirement to check,
+  or a title only close to yours).
+- **Flags** read from the text: security clearance, citizenship, travel
+  percentage, degree required, senior titles, experience asked above
+  yours, and pay above or below the pay target in the criteria. Pay is also
+  read from the description when the source doesn't give it.
+- **Open checks**: postings from employer boards are open while they're on
+  the board and closed once they leave it. Postings with a closing date
+  close on that date. Others are checked by opening the posting page (a
+  few per sync, or "Check" on a card).
+- **Employer boards**: list Greenhouse, Lever or Ashby boards on the
+  Profile page (`greenhouse:stripe`, `lever:palantir`, `ashby:ramp`).
+  The sync keeps postings whose title matches one of your titles.
+- Sources can be turned off per account on the Profile page.

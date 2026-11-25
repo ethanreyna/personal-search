@@ -3,10 +3,12 @@ import { api, watchSession } from './api';
 import type { Me } from './types';
 import Landing from './Landing';
 import App from './App';
+import Digest from './Digest';
 import Personalize from './Personalize';
 import Profile from './Profile';
 
 const PAGES = [
+  ['digest', 'Digest'],
   ['listings', 'Listings'],
   ['personalize', 'Personalize'],
   ['profile', 'Profile'],
@@ -69,6 +71,7 @@ export default function Root() {
             <a href="#/profile">Go to Profile</a>
           </p>
         )}
+        {page === 'digest' && <Digest />}
         {page === 'listings' && <App />}
         {page === 'personalize' && <Personalize hasDocument={me.hasDocument} />}
         {page === 'profile' && <Profile onSaved={refresh} />}

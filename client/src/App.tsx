@@ -25,7 +25,7 @@ const DEFAULT_FORM: SearchForm = {
   limit: 50,
 };
 
-const SOURCES = ['linkedin', 'adzuna', 'jsearch', 'remotive', 'remoteok', 'arbeitnow'];
+const SOURCES = ['linkedin', 'adzuna', 'jsearch', 'jooble', 'federal', 'greenhouse', 'lever', 'ashby', 'remotive', 'remoteok', 'arbeitnow'];
 const SORTS: Array<[string, string]> = [
   ['score', 'Best match'],
   ['newest', 'Newest'],
@@ -69,6 +69,8 @@ export default function App() {
   const [sort, setSort] = useState(() => readPref('sort', 'score'));
   const [englishOnly, setEnglishOnly] = useState(() => readPref('englishOnly', '1') === '1');
   const [onlyWithPoster, setOnlyWithPoster] = useState(false);
+  const [hideClosed, setHideClosed] = useState(() => readPref('hideClosed', '1') === '1');
+  const [payListed, setPayListed] = useState(() => readPref('payListed', '0') === '1');
   const [form, setForm] = useState<SearchForm>(loadForm);
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -106,6 +108,8 @@ export default function App() {
       params.set('sort', sort);
       if (englishOnly) params.set('englishOnly', '1');
       if (onlyWithPoster) params.set('hasPoster', '1');
+      if (hideClosed) params.set('hideClosed', '1');
+      if (payListed) params.set('payListed', '1');
       if (form.maxApplicants !== '') params.set('maxApplicants', String(form.maxApplicants));
       if (form.postedWithinDays) params.set('postedWithinDays', String(form.postedWithinDays));
       if (form.maxYears !== '') params.set('maxYears', String(form.maxYears));
@@ -127,6 +131,8 @@ export default function App() {
     sort,
     englishOnly,
     onlyWithPoster,
+    hideClosed,
+    payListed,
     form.maxApplicants,
     form.postedWithinDays,
     form.maxYears,
@@ -215,7 +221,7 @@ export default function App() {
             onChange={(e) => update('keywords', e.target.value)}
           />
           <button type="submit" className="active" disabled={searching || !form.keywords.trim()}>
-            {searching ? 'Searching… (1–3 min)' : 'Search LinkedIn'}
+            {searching ? 'Searching… (1–3 min)' : 'Search all sources'}
           </button>
         </div>
         <div className="row">
@@ -351,6 +357,28 @@ export default function App() {
         <label className="toggle">
           <input type="checkbox" checked={onlyWithPoster} onChange={(e) => setOnlyWithPoster(e.target.checked)} />
           Has poster
+        </label>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={hideClosed}
+            onChange={(e) => {
+              setHideClosed(e.target.checked);
+              writePref('hideClosed', e.target.checked ? '1' : '0');
+            }}
+          />
+          Hide closed
+        </label>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={payListed}
+            onChange={(e) => {
+              setPayListed(e.target.checked);
+              writePref('payListed', e.target.checked ? '1' : '0');
+            }}
+          />
+          Pay listed
         </label>
         <label className="minscore">
           Min match %

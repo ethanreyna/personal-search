@@ -15,6 +15,10 @@ export interface RawListing {
   posterTitle?: string;
   posterUrl?: string;
   companyWebsite?: string;
+  /** Set when the source itself proves the posting is open right now (an employer board, an open close date). */
+  openNow?: boolean;
+  /** Last day to respond, when the source gives one. */
+  closesAt?: string;
 }
 
 export interface OutreachProfile {
@@ -52,6 +56,12 @@ export interface Criteria {
   targetYearsExperience: number;
   notes?: string;
   outreach?: OutreachProfile;
+  /** Lowest pay worth considering (yearly). Listings below it are flagged, above it are noted. */
+  minSalary?: number;
+  /** Sources turned off for this account. Everything else configured is used. */
+  disabledSources?: string[];
+  /** Employer boards to watch, as "greenhouse:token", "lever:company" or "ashby:board". */
+  boards?: string[];
 }
 
 /** On-demand search parameters entered in the dashboard. */
@@ -61,6 +71,8 @@ export interface SearchParams {
   remoteOnly?: boolean;
   postedWithinDays?: number;
   limit?: number;
+  /** Titles from the criteria; employer boards keep postings whose title matches one (used by the scheduled sync). */
+  titles?: string[];
 }
 
 export interface Env {
@@ -78,4 +90,8 @@ export interface Env {
   APIFY_ACTOR?: string;
   HUNTER_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
+  JOOBLE_API_KEY?: string;
+  /** Federal listings API key, and the email address it was registered with (sent as User-Agent, as that API requires). */
+  FEDERAL_API_KEY?: string;
+  FEDERAL_API_EMAIL?: string;
 }

@@ -28,6 +28,23 @@ export interface Listing {
   has_letter: number;
   draft_subject: string | null;
   draft_body: string | null;
+  first_seen: string | null;
+  /** JSON array of { code, label, kind }. */
+  flags: string | null;
+  tier: 'top' | 'second' | 'low' | null;
+  why: string | null;
+  to_check: string | null;
+  open_status: 'open' | 'closed' | null;
+  checked_at: string | null;
+  closes_at: string | null;
+  /** Other sources the same posting was seen on, comma separated. */
+  also_on: string | null;
+}
+
+export interface Flag {
+  code: string;
+  label: string;
+  kind: 'good' | 'warn' | 'info';
 }
 
 export interface SearchForm {
@@ -75,6 +92,16 @@ export interface Criteria {
   excludeKeywords: string[];
   targetYearsExperience: number;
   outreach?: { name: string; background: string[]; links?: string[] };
+  minSalary?: number;
+  disabledSources?: string[];
+  boards?: string[];
+}
+
+export interface SourceInfo {
+  name: string;
+  label: string;
+  configured: boolean;
+  note?: string;
 }
 
 export interface Me {

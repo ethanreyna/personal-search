@@ -1,7 +1,8 @@
 import { Hono, type Context } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { Env, ProfileDocument, SearchParams } from './sources/types';
-import { fetchAllSources, searchSources } from './sources';
+import { fetchAllSources, searchSources, sourceCatalog } from './sources';
+import { checkPosting, checkSome, closeExpired, closeMissingBoardPostings } from './liveness';
 import { findPosterEmail } from './contact';
 import { draftOutreach } from './draft';
 import { tailorDocument } from './document';
@@ -26,6 +27,11 @@ import {
   getPersonalization,
   createPersonalization,
   deletePersonalization,
+  markDuplicates,
+  getDigest,
+  setOpenStatus,
+  nextAccountToSync,
+  markSynced,
   type OutputTable,
 } from './db';
 import { getCriteria, getDocumentSource, savedCriteria } from './criteria';
@@ -197,6 +203,10 @@ app.get('/api/listings', async (c) => {
     excludeDescriptionWords: parseWordList(q('excludeText')),
     sort: q('sort'),
     englishOnly: q('englishOnly') === '1',
+    hideClosed: q('hideClosed') === '1',
+    payListed: q('payListed') === '1',
+    includeDuplicates: q('includeDuplicates') === '1',
+    tier: q('tier'),
   });
   return c.json(rows);
 });
@@ -211,11 +221,17 @@ app.post('/api/search', async (c) => {
 
   const startedAt = new Date().toISOString();
   const criteria = getCriteria(user);
-  const result = await searchSources(c.env, { ...body, keywords: body.keywords.trim() });
+  const result = await searchSources(
+    c.env,
+    { ...body, keywords: body.keywords.trim(), titles: undefined },
+    { disabled: criteria.disabledSources, boards: criteria.boards }
+  );
   for (const l of result.listings) {
     await upsertListing(c.env.DB, user.id, l, criteria);
   }
   await backfillDerived(c.env.DB);
+  await markDuplicates(c.env.DB, user.id);
+  await closeMissingBoardPostings(c.env.DB, user.id, result.boardResults);
   await recordSyncRun(c.env.DB, user.id, startedAt, new Date().toISOString(), result.ok, result.failed, result.listings.length);
 
   const summary = { processed: result.listings.length, counts: result.counts, errors: result.errors };
@@ -274,6 +290,26 @@ app.get('/api/stats', async (c) => {
     .bind(c.get('user').id)
     .all();
   return c.json(results);
+});
+
+// Every source with whether it's set up, for the Profile page.
+app.get('/api/sources', (c) => c.json(sourceCatalog(c.env)));
+
+app.get('/api/digest', async (c) => {
+  const user = c.get('user');
+  await rescoreListings(c.env.DB, user.id, getCriteria(user));
+  const days = Math.min(Math.max(num(c.req.query('days')) ?? 7, 1), 30);
+  return c.json(await getDigest(c.env.DB, user.id, days));
+});
+
+// Opens one posting to see whether it's still up.
+app.post('/api/listings/:id/check', async (c) => {
+  const user = c.get('user');
+  const row = await getListing(c.env.DB, user.id, c.req.param('id'));
+  if (!row) return c.json({ error: 'not found' }, 404);
+  const status = await checkPosting(row.url, row.source);
+  await setOpenStatus(c.env.DB, user.id, row.id, status);
+  return c.json({ open_status: status ?? row.open_status ?? null, checked: status !== null });
 });
 
 app.post('/api/sync', async (c) => {
@@ -384,22 +420,29 @@ app.get('*', async (c) => await c.env.ASSETS.fetch(c.req.raw));
 
 async function syncUser(env: Env, userId: number, criteria: ReturnType<typeof getCriteria>) {
   const startedAt = new Date().toISOString();
-  const { listings, ok, failed } = await fetchAllSources(env, criteria);
+  const { listings, ok, failed, errors, boardResults } = await fetchAllSources(env, criteria);
   for (const listing of listings) {
     await upsertListing(env.DB, userId, listing, criteria);
   }
   await backfillDerived(env.DB);
   await rescoreListings(env.DB, userId, criteria);
+  await markDuplicates(env.DB, userId);
+  await closeMissingBoardPostings(env.DB, userId, boardResults);
+  await closeExpired(env.DB, userId);
+  const checked = await checkSome(env.DB, userId);
   await recordSyncRun(env.DB, userId, startedAt, new Date().toISOString(), ok, failed, listings.length);
-  return { ok, failed, processed: listings.length };
+  await markSynced(env.DB, userId);
+  return { ok, failed, errors, processed: listings.length, checked };
 }
 
-/** Scheduled sync: every account that has saved criteria, one after another. */
-async function syncAll(env: Env) {
-  const { results } = await env.DB
-    .prepare('SELECT id, criteria_json FROM users WHERE criteria_json IS NOT NULL ORDER BY id')
-    .all<{ id: number; criteria_json: string }>();
-  for (const u of results) {
+/**
+ * Scheduled sync, run hourly: the one account most overdue (synced more than
+ * 4 hours ago). One account per run keeps each run under the outbound
+ * request limit.
+ */
+async function syncDue(env: Env) {
+  const u = await nextAccountToSync(env.DB);
+  if (u) {
     try {
       await syncUser(env, u.id, getCriteria(u));
     } catch (err) {
@@ -413,6 +456,6 @@ async function syncAll(env: Env) {
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(syncAll(env));
+    ctx.waitUntil(syncDue(env));
   },
 };

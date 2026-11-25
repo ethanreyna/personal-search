@@ -1,12 +1,13 @@
 import type { Criteria, RawListing } from './sources/types';
 import { minYearsRequired } from './experience';
+import { parseSalary, requirementFlags, type Flag } from './signals';
 
 /**
  * Match % (0-100) between a listing and the criteria profile:
  *   title fit 30, skill coverage 40, experience 20, location 10.
  * Bump ALGO_VERSION when the formula changes so stored scores are redone.
  */
-const ALGO_VERSION = 'm3';
+const ALGO_VERSION = 'm5';
 
 // Technologies commonly named in listings. Anything here that a listing
 // mentions and that isn't in the criteria skills counts as a gap.
@@ -98,7 +99,18 @@ export interface MatchResult {
   score: number;
   /** Short explanation shown on the card, e.g. "Has React, TypeScript · Missing AWS". */
   notes: string;
+  flags: Flag[];
+  /** top = clear match with pay listed and nothing to check; second = worth a look but needs judgement; low = the rest. */
+  tier: 'top' | 'second' | 'low';
+  /** Why it is shown, e.g. "Title match (Frontend Engineer) · remote · pay listed". */
+  why: string;
+  /** What to check before spending time on it. Empty for top listings. */
+  check: string;
+  /** Yearly pay parsed from the text, when the source didn't give one. */
+  parsedPay: { min: number; max: number } | null;
 }
+
+const money = (n: number) => `${Math.round(n / 1000)}k`;
 
 export function matchListing(listing: RawListing, criteria: Criteria, minYears?: number | null): MatchResult {
   const title = plain(listing.title);
@@ -109,7 +121,8 @@ export function matchListing(listing: RawListing, criteria: Criteria, minYears?:
 
   // Title fit (30)
   let titlePts = 0;
-  if (criteria.titles.some((t) => title.includes(t.toLowerCase()))) titlePts = 30;
+  const exactTitle = criteria.titles.find((t) => title.includes(t.toLowerCase()));
+  if (exactTitle) titlePts = 30;
   else if (ROLE_WORDS.some((w) => has(title, w))) titlePts = 18;
   if (HIGH_LEVEL.some((w) => has(title, w))) titlePts -= 20;
   else if (SENIOR.some((w) => has(title, w))) titlePts -= 8;
@@ -148,7 +161,72 @@ export function matchListing(listing: RawListing, criteria: Criteria, minYears?:
   if (missing.length) parts.push(`Missing ${missing.slice(0, 6).map(label).join(', ')}`);
   if (years !== null) parts.push(`${years}+ yrs asked`);
 
-  return { score: Math.max(0, Math.min(100, Math.round(score))), notes: parts.join(' · ') };
+  const final = Math.max(0, Math.min(100, Math.round(score)));
+
+  // Flags, tier and the reasons shown on the card.
+  const flags: Flag[] = [];
+  const why: string[] = [];
+  const check: string[] = [];
+  const closeTo = criteria.titles.find((t) => t.toLowerCase().split(/\s+/).filter((w) => w.length > 2).some((w) => has(title, w)));
+  if (exactTitle) {
+    flags.push({ code: 'title_exact', label: 'Title match', kind: 'good' });
+    why.push(`Title match (${exactTitle})`);
+  } else if (titlePts > 0) {
+    flags.push({ code: 'title_close', label: 'Close title match', kind: 'info' });
+    why.push(closeTo ? `Close to your title "${closeTo}"` : 'Related title');
+    check.push(`The title is only close to yours${closeTo ? ` ("${closeTo}")` : ''}. Check the duties.`);
+  }
+  if (HIGH_LEVEL.some((w) => has(title, w))) {
+    flags.push({ code: 'level', label: 'Above your level', kind: 'warn' });
+    check.push('The title is above your level.');
+  } else if (SENIOR.some((w) => has(title, w))) {
+    flags.push({ code: 'level', label: 'Senior title', kind: 'info' });
+    check.push('Senior title. Check whether the years and scope fit.');
+  }
+  if (listing.remote) why.push('remote');
+  else if (nearby) why.push(listing.location ?? 'near you');
+
+  // Under $20k a year is almost always monthly, another currency, or a placeholder, so it counts as not listed.
+  const sane = (n: number | undefined) => (n && n >= 20_000 ? n : undefined);
+  const parsedPay = sane(listing.salaryMin) || sane(listing.salaryMax) ? null : parseSalary(listing.description);
+  const payMax = sane(listing.salaryMax) ?? sane(listing.salaryMin) ?? parsedPay?.max;
+  const payMin = sane(listing.salaryMin) ?? sane(listing.salaryMax) ?? parsedPay?.min;
+  const payTarget = criteria.minSalary;
+  if (!payMax) {
+    flags.push({ code: 'pay_missing', label: 'Pay not listed', kind: 'info' });
+    check.push('Pay not listed.');
+  } else if (payTarget && payMax < payTarget) {
+    flags.push({ code: 'pay_below', label: 'Pay below your target', kind: 'warn' });
+    check.push(`Top of the range (${money(payMax)}) is under your target of ${money(payTarget)}.`);
+  } else if (payTarget && payMin && payMin >= payTarget) {
+    flags.push({ code: 'pay_above', label: 'Pay above your target', kind: 'good' });
+    why.push('pay above your target');
+  } else {
+    why.push(`pay listed (${money(payMin ?? payMax)}${payMin && payMin !== payMax ? `–${money(payMax)}` : ''})`);
+  }
+
+  if (years !== null && years > criteria.targetYearsExperience + 1) {
+    flags.push({ code: 'too_senior', label: `${years}+ yrs asked`, kind: 'warn' });
+    check.push(`Asks for ${years}+ years; you have ${criteria.targetYearsExperience}.`);
+  }
+  for (const f of requirementFlags(listing.description ?? '')) {
+    flags.push(f);
+    check.push(`${f.label}.`);
+  }
+
+  const warns = flags.some((f) => f.kind === 'warn');
+  const tier: MatchResult['tier'] =
+    final >= 60 && exactTitle && payMax && !warns && !flags.some((f) => f.code === 'level') ? 'top' : final >= 45 || (exactTitle && final >= 35) ? 'second' : 'low';
+
+  return {
+    score: final,
+    notes: parts.join(' · '),
+    flags,
+    tier,
+    why: why.join(' · '),
+    check: tier === 'top' ? '' : check.join(' '),
+    parsedPay,
+  };
 }
 
 /** Changes whenever the criteria (minus the outreach text) or the formula change. */
